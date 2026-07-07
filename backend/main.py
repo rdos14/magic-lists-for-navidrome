@@ -879,7 +879,7 @@ async def refresh_scheduled_playlists():
         db = DatabaseManager(db_path)
         current_time = datetime.now()
         
-        scheduled_playlists = await db.get_scheduled_playlists_due(current_time, grace_hours=168)
+        scheduled_playlists = await db.get_scheduled_playlists_due(current_time)
         
         if not scheduled_playlists:
             if LOG_LEVEL == "DEBUG":
@@ -1397,11 +1397,7 @@ async def force_refresh_playlist(navidrome_playlist_id: str, db: DatabaseManager
     try:
         scheduler_logger.info(f"🧪 Manual refresh requested for playlist {navidrome_playlist_id}")
         
-        # Get all scheduled playlists
-        scheduled_playlists = await db.get_scheduled_playlists()
-        
-        # Find the requested playlist
-        target_playlist = next((p for p in scheduled_playlists if p.navidrome_playlist_id == navidrome_playlist_id), None)
+        target_playlist = await db.get_scheduled_playlist_by_navidrome_id(navidrome_playlist_id)
         
         if not target_playlist:
             raise HTTPException(status_code=404, detail="Playlist not found or not scheduled for refresh")
@@ -1422,13 +1418,6 @@ async def force_refresh_playlist(navidrome_playlist_id: str, db: DatabaseManager
             await refresh_this_is_playlist(target_playlist, db)
         else:
             raise HTTPException(status_code=400, detail=f"Unknown playlist type '{target_playlist.playlist_type}'")
-            
-        # Update the next refresh time since we just refreshed it
-        current_time = datetime.now()
-        await db.update_scheduled_playlist_time(
-            navidrome_playlist_id=navidrome_playlist_id,
-            next_refresh=current_time  # Will be pushed forward by the refresh functions
-        )
             
         return {"message": f"Successfully refreshed playlist '{playlist_name}'"}
         
