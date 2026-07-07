@@ -3,11 +3,10 @@ FROM python:3.11-slim
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+# No apt/gcc/curl layer:
+# - current requirements have prebuilt wheels on amd64
+# - healthcheck uses Python stdlib instead of curl
+# This avoids DSM killing the build during apt install.
 
 # Copy requirements and install Python dependencies
 COPY requirements.txt .
@@ -32,9 +31,9 @@ EXPOSE 8000
 ENV PYTHONPATH=/app
 ENV DATABASE_PATH=/app/data/magiclists.db
 
-# Health check
+# Health check without curl
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/ || exit 1
+    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/', timeout=5).read()"]
 
 # Run the application
 CMD ["python", "-m", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
