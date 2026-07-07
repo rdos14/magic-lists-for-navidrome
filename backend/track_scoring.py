@@ -224,6 +224,14 @@ def filter_tracks_for_this_is_playlist(
     threshold_multiplier = calculate_filter_threshold(target_playlist_size)
     threshold_count = target_playlist_size * threshold_multiplier
     
+    # Hard cap to prevent HTTP 413 errors with large genres
+    MAX_TRACKS_FOR_AI = 500
+    RANDOM_TRACKS_COUNT = 50
+    
+    if threshold_count > MAX_TRACKS_FOR_AI:
+        print(f"⚠️  Threshold {threshold_count} exceeds hard cap, capping at {MAX_TRACKS_FOR_AI} tracks")
+        threshold_count = MAX_TRACKS_FOR_AI
+    
     # Only filter if source tracks exceed threshold
     if len(source_tracks) <= threshold_count:
         return source_tracks, {
@@ -236,8 +244,22 @@ def filter_tracks_for_this_is_playlist(
     # Score all tracks
     scored_tracks = score_tracks_by_user_engagement(source_tracks, library_stats)
     
-    # Take top N scored tracks
-    filtered_tracks = [track for score, track in scored_tracks[:threshold_count]]
+    # Mix: top scored tracks + random sample for variety
+    import random
+    top_count = threshold_count - RANDOM_TRACKS_COUNT
+    
+    # Take top scored tracks
+    top_tracks = [track for score, track in scored_tracks[:top_count]]
+    
+    # Take random sample from remaining tracks (avoid duplicates)
+    remaining_tracks = [track for score, track in scored_tracks[top_count:]]
+    random_sample = random.sample(remaining_tracks, min(RANDOM_TRACKS_COUNT, len(remaining_tracks)))
+    
+    # Combine and shuffle to mix top + random
+    filtered_tracks = top_tracks + random_sample
+    random.shuffle(filtered_tracks)
+    
+    print(f"🎲 Added variety: {len(top_tracks)} top-scored + {len(random_sample)} random tracks")
     
     # Log filtering decision and final payload
     print(f"🎯 FILTERING DECISION:")

@@ -175,3 +175,6 @@ debug_payloads/
 /ref-docs
 /ref-docs/*
 /payloads
+# Synology DSM metadata
+@eaDir/
+**/@eaDir/

@@ -263,6 +263,7 @@ class DatabaseManager:
                     p.updated_at,
                     p.last_refreshed,
                     p.playlist_length,
+                    p.library_ids,
                     sp.refresh_frequency,
                     sp.next_refresh,
                     sp.playlist_type
@@ -284,9 +285,10 @@ class DatabaseManager:
                         "updated_at": row[7],
                         "last_refreshed": row[8],
                         "playlist_length": row[9],
-                        "refresh_frequency": row[10],
-                        "next_refresh": row[11],
-                        "playlist_type": row[12]
+                        "library_ids": json.loads(row[10]) if row[10] else [],
+                        "refresh_frequency": row[11],
+                        "next_refresh": row[12],
+                        "playlist_type": row[13]
                     }
                     playlists.append(playlist_data)
         
@@ -307,6 +309,8 @@ class DatabaseManager:
                     p.created_at, 
                     p.updated_at,
                     p.navidrome_playlist_id,
+                    p.playlist_length,
+                    p.library_ids,
                     sp.refresh_frequency,
                     sp.next_refresh,
                     sp.playlist_type
@@ -326,9 +330,11 @@ class DatabaseManager:
                         "created_at": row[5],
                         "updated_at": row[6],
                         "navidrome_playlist_id": row[7],
-                        "refresh_frequency": row[8],
-                        "next_refresh": row[9],
-                        "playlist_type": row[10]
+                        "playlist_length": row[8],
+                        "library_ids": json.loads(row[9]) if row[9] else [],
+                        "refresh_frequency": row[10],
+                        "next_refresh": row[11],
+                        "playlist_type": row[12]
                     }
         
         return None

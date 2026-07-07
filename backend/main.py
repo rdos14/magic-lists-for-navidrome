@@ -184,7 +184,6 @@ async def get_artists(library_id: List[str] = Query(None)):
         return artists
     except Exception as e:
         error_msg = str(e)
-        # Check if it's an authentication error and return appropriate status code
         if "Invalid username or password" in error_msg or "No authentication method available" in error_msg:
             raise HTTPException(status_code=401, detail=error_msg)
         elif "Network error" in error_msg or "connecting to Navidrome" in error_msg:
@@ -201,7 +200,6 @@ async def get_genres(library_id: List[str] = Query(None)):
         return genres
     except Exception as e:
         error_msg = str(e)
-        # Check if it's an authentication error and return appropriate status code
         if "Invalid username or password" in error_msg or "No authentication method available" in error_msg:
             raise HTTPException(status_code=401, detail=error_msg)
         elif "Network error" in error_msg or "connecting to Navidrome" in error_msg:
@@ -218,7 +216,6 @@ async def get_music_folders():
         return folders
     except Exception as e:
         error_msg = str(e)
-        # Check if it's an authentication error and return appropriate status code
         if "Invalid username or password" in error_msg or "No authentication method available" in error_msg:
             raise HTTPException(status_code=401, detail=error_msg)
         elif "Network error" in error_msg or "connecting to Navidrome" in error_msg:
@@ -234,15 +231,12 @@ async def get_health_check():
     global system_check_passed, system_check_results
     
     try:
-        # Run fresh health checks
         health_service = HealthCheckService()
         fresh_results = await health_service.run_checks()
         
-        # Update app state with fresh results
         system_check_passed = fresh_results.get("all_passed", False)
         system_check_results = fresh_results
         
-        # Log the result
         if system_check_passed:
             scheduler_logger.info("✅ System health checks passed via API")
         else:
@@ -272,18 +266,15 @@ async def create_playlist(
 ):
     """Create an AI-curated 'This Is' playlist for a single artist"""
     try:
-        # Get clients
         nav_client = get_navidrome_client()
         ai_client_instance = get_ai_client()
         
-        # Get artist info
         all_artists = await nav_client.get_artists()
         selected_artists = [a for a in all_artists if a["id"] in request.artist_ids]
         
         if not selected_artists:
             raise HTTPException(status_code=404, detail="Artists not found")
         
-        # Limit to single artist only - use first artist from the request
         if request.artist_ids:
             first_artist_id = request.artist_ids[0]
             selected_artists = [a for a in all_artists if a["id"] == first_artist_id]
@@ -291,10 +282,8 @@ async def create_playlist(
         else:
             raise HTTPException(status_code=400, detail="At least one artist must be selected")
 
-        # Generate playlist name if not provided - for single artist
         playlist_name = request.playlist_name or f"This Is: {artist_names[0]}"
         
-        # Get tracks for only the first artist
         all_tracks = []
         tracks = await nav_client.get_tracks_by_artist(first_artist_id, request.library_ids)
         if tracks:
@@ -303,7 +292,6 @@ async def create_playlist(
         if not all_tracks:
             raise HTTPException(status_code=404, detail="No tracks found for the selected artists")
         
-        # NEW: Apply smart filtering for "This Is" playlists to optimize LLM payload
         library_stats = await nav_client.get_library_stats()
         
         filtered_tracks, filter_metadata = filter_tracks_for_this_is_playlist(
@@ -312,17 +300,14 @@ async def create_playlist(
             library_stats=library_stats
         )
         
-        # Log filtering results for analytics/debugging
         if filter_metadata['filtered']:
             scheduler_logger.info(f"🎯 Smart filtering applied: {filter_metadata['source_count']} → {filter_metadata['sent_count']} tracks (multiplier: {filter_metadata['threshold_multiplier']}x)")
             scheduler_logger.info(f"📊 Score range: {filter_metadata['score_range']['highest']:.1f} - {filter_metadata['score_range']['lowest']:.1f} (cutoff: {filter_metadata['score_range']['cutoff']:.1f})")
         else:
             scheduler_logger.info(f"✅ No filtering needed: {filter_metadata['source_count']} tracks below threshold")
         
-        # Use filtered tracks for LLM processing
         tracks_for_llm = filtered_tracks
         
-        # Use AI to curate the playlist (always include reasoning for new recipe format)
         curation_result = await ai_client_instance.curate_this_is(
             artist_name=', '.join(artist_names),
             tracks_json=tracks_for_llm,
@@ -330,32 +315,26 @@ async def create_playlist(
             include_reasoning=True
         )
         
-        # Handle both old and new return formats
         if isinstance(curation_result, tuple):
             curated_track_ids, reasoning = curation_result
         else:
             curated_track_ids = curation_result
             reasoning = ""
 
-        # Check for validation failures or empty results
         if not curated_track_ids:
             if reasoning and "Playlist generation failed" in reasoning:
-                # This is a validation failure - don't create playlist
                 scheduler_logger.error(f"❌ Playlist creation aborted: {reasoning}")
                 raise HTTPException(status_code=400, detail=f"Playlist generation failed: {reasoning}")
             else:
-                # This is an empty result without explanation
                 scheduler_logger.error(f"❌ AI curation returned no tracks for {', '.join(artist_names)}")
                 raise HTTPException(status_code=500, detail="AI curation failed to return any tracks")
 
-        # Log the AI reasoning for debugging (truncated)
         if reasoning:
             reasoning_preview = reasoning[:200] + "..." if len(reasoning) > 200 else reasoning
             scheduler_logger.info(f"🎵 AI curation applied for {', '.join(artist_names)} (reasoning length: {len(reasoning)} chars): {reasoning_preview}")
         else:
             scheduler_logger.info(f"⚠️ No AI reasoning provided for {', '.join(artist_names)}")
 
-        # Create playlist in Navidrome with AI reasoning as comment
         comment_to_use = reasoning if reasoning else None
         comment_preview = comment_to_use[:200] + "..." if comment_to_use and len(comment_to_use) > 200 else comment_to_use
         scheduler_logger.info(f"💬 Creating playlist with comment (length: {len(comment_to_use) if comment_to_use else 0}): {comment_preview}")
@@ -366,16 +345,12 @@ async def create_playlist(
             comment=comment_to_use
         )
         
-        # Get track titles for database storage - PRESERVE AI CURATION ORDER
-        # Note: Use all_tracks for mapping since AI might reference tracks from full set
         track_titles = []
         track_id_to_title = {track["id"]: track["title"] for track in all_tracks}
-        for track_id in curated_track_ids:  # Iterate in AI-curated order
+        for track_id in curated_track_ids:
             if track_id in track_id_to_title:
                 track_titles.append(track_id_to_title[track_id])
         
-        
-        # Store playlist in local database (using the first artist_id for now)
         playlist = await db.create_playlist(
             artist_id=request.artist_ids[0],
             playlist_name=playlist_name,
@@ -386,11 +361,9 @@ async def create_playlist(
             library_ids=request.library_ids
         )
         
-        # Handle scheduling if not "none" or "never"
         if request.refresh_frequency not in ["none", "never"]:
             next_refresh = calculate_next_refresh(request.refresh_frequency)
             
-            # Store the scheduled playlist
             await db.create_scheduled_playlist(
                 playlist_type="this_is",
                 navidrome_playlist_id=navidrome_playlist_id,
@@ -398,11 +371,9 @@ async def create_playlist(
                 next_refresh=next_refresh
             )
             
-            # Schedule the refresh job
             schedule_playlist_refresh()
             scheduler_logger.info(f"📅 Scheduled {request.refresh_frequency} refresh for This Is playlist: {playlist_name}")
         
-        # Add Navidrome playlist ID to response
         playlist_dict = playlist.dict() if hasattr(playlist, 'dict') else playlist.__dict__
         playlist_dict["navidrome_playlist_id"] = navidrome_playlist_id
         playlist_dict["refresh_frequency"] = request.refresh_frequency
@@ -424,11 +395,9 @@ async def create_playlist_with_reasoning(
 ):
     """Create an AI-curated 'This Is' playlist with AI reasoning explanation"""
     try:
-        # Get clients
         nav_client = get_navidrome_client()
         ai_client_instance = get_ai_client()
         
-        # Get artist info - use first artist from the array
         artists = await nav_client.get_artists()
         if not request.artist_ids or len(request.artist_ids) == 0:
             raise HTTPException(status_code=400, detail="At least one artist must be selected")
@@ -439,17 +408,13 @@ async def create_playlist_with_reasoning(
             raise HTTPException(status_code=404, detail="Artist not found")
         
         artist_name = artist["name"]
-        
-        # Generate playlist name if not provided
         playlist_name = getattr(request, 'playlist_name', None) or f"This Is: {artist_name}"
         
-        # Get tracks for the artist
         tracks = await nav_client.get_tracks_by_artist(first_artist_id)
         
         if not tracks:
             raise HTTPException(status_code=404, detail="No tracks found for this artist")
         
-        # Use AI to curate the playlist WITH reasoning
         curated_track_ids, reasoning = await ai_client_instance.curate_this_is(
             artist_name=artist_name,
             tracks_json=tracks,
@@ -457,21 +422,18 @@ async def create_playlist_with_reasoning(
             include_reasoning=True
         )
 
-        # Create playlist in Navidrome with AI reasoning as comment
         navidrome_playlist_id = await nav_client.create_playlist(
             name=playlist_name,
             track_ids=curated_track_ids,
             comment=reasoning if reasoning else None
         )
         
-        # Get track titles for database storage
         track_titles = []
         track_id_to_title = {track["id"]: track["title"] for track in tracks}
         for track_id in curated_track_ids:
             if track_id in track_id_to_title:
                 track_titles.append(track_id_to_title[track_id])
         
-        # Store playlist in local database
         playlist = await db.create_playlist(
             artist_id=first_artist_id,
             playlist_name=playlist_name,
@@ -479,7 +441,6 @@ async def create_playlist_with_reasoning(
             navidrome_playlist_id=navidrome_playlist_id
         )
         
-        # Add Navidrome playlist ID and AI reasoning to response
         playlist_dict = playlist.dict() if hasattr(playlist, 'dict') else playlist.__dict__
         playlist_dict["navidrome_playlist_id"] = navidrome_playlist_id
         playlist_dict["ai_reasoning"] = reasoning
@@ -498,21 +459,17 @@ async def create_genre_playlist(
 ):
     """Create an AI-curated 'Genre Mix' playlist for a specific genre"""
     try:
-        # Get clients
         nav_client = get_navidrome_client()
         ai_client_instance = get_ai_client()
 
-        # Generate playlist name if not provided
         playlist_name = request.playlist_name or f"Genre Mix: {request.genre}"
 
-        # Get tracks for the genre
         all_tracks = await nav_client.get_tracks_by_genre(request.genre, request.library_ids)
         scheduler_logger.info(f"🎵 Found {len(all_tracks)} total tracks for genre '{request.genre}'")
 
         if not all_tracks:
             raise HTTPException(status_code=404, detail=f"No tracks found for genre: {request.genre}")
 
-        # NEW: Apply smart filtering for "Genre Mix" playlists to optimize LLM payload
         library_stats = await nav_client.get_library_stats()
 
         filtered_tracks, filter_metadata = filter_tracks_for_this_is_playlist(
@@ -521,17 +478,14 @@ async def create_genre_playlist(
             library_stats=library_stats
         )
 
-        # Log filtering results for analytics/debugging
         if filter_metadata['filtered']:
             scheduler_logger.info(f"🎯 Smart filtering applied: {filter_metadata['source_count']} → {filter_metadata['sent_count']} tracks (multiplier: {filter_metadata['threshold_multiplier']}x)")
             scheduler_logger.info(f"📊 Score range: {filter_metadata['score_range']['highest']:.1f} - {filter_metadata['score_range']['lowest']:.1f} (cutoff: {filter_metadata['score_range']['cutoff']:.1f})")
         else:
             scheduler_logger.info(f"✅ No filtering needed: {filter_metadata['source_count']} tracks below threshold")
 
-        # Use filtered tracks for LLM processing
         tracks_for_llm = filtered_tracks
 
-        # Use AI to curate the playlist (always include reasoning for new recipe format)
         curation_result = await ai_client_instance.curate_genre_mix(
             genre=request.genre,
             tracks_json=tracks_for_llm,
@@ -539,32 +493,26 @@ async def create_genre_playlist(
             include_reasoning=True
         )
 
-        # Handle both old and new return formats
         if isinstance(curation_result, tuple):
             curated_track_ids, reasoning = curation_result
         else:
             curated_track_ids = curation_result
             reasoning = ""
 
-        # Check for validation failures or empty results
         if not curated_track_ids:
             if reasoning and "Playlist generation failed" in reasoning:
-                # This is a validation failure - don't create playlist
                 scheduler_logger.error(f"❌ Playlist creation aborted: {reasoning}")
                 raise HTTPException(status_code=400, detail=f"Playlist generation failed: {reasoning}")
             else:
-                # This is an empty result without explanation
                 scheduler_logger.error(f"❌ AI curation returned no tracks for {request.genre}")
                 raise HTTPException(status_code=500, detail="AI curation failed to return any tracks")
 
-        # Log the AI reasoning for debugging (truncated)
         if reasoning:
             reasoning_preview = reasoning[:200] + "..." if len(reasoning) > 200 else reasoning
             scheduler_logger.info(f"🎵 AI curation applied for {request.genre} (reasoning length: {len(reasoning)} chars): {reasoning_preview}")
         else:
             scheduler_logger.info(f"⚠️ No AI reasoning provided for {request.genre}")
 
-        # Create playlist in Navidrome with AI reasoning as comment
         comment_to_use = reasoning if reasoning else None
         comment_preview = comment_to_use[:200] + "..." if comment_to_use and len(comment_to_use) > 200 else comment_to_use
         scheduler_logger.info(f"💬 Creating playlist with comment (length: {len(comment_to_use) if comment_to_use else 0}): {comment_preview}")
@@ -575,17 +523,14 @@ async def create_genre_playlist(
             comment=comment_to_use
         )
 
-        # Get track titles for database storage
         track_titles = []
         track_id_to_title = {track["id"]: track["title"] for track in all_tracks}
-        for track_id in curated_track_ids:  # Iterate in AI-curated order
+        for track_id in curated_track_ids:
             if track_id in track_id_to_title:
                 track_titles.append(track_id_to_title[track_id])
 
-
-        # Store playlist in local database (using genre as identifier)
         playlist = await db.create_playlist(
-            artist_id=request.genre,  # Using genre as artist_id for now
+            artist_id=request.genre,
             playlist_name=playlist_name,
             songs=track_titles,
             reasoning=reasoning,
@@ -594,11 +539,9 @@ async def create_genre_playlist(
             library_ids=request.library_ids
         )
 
-        # Handle scheduling if not "none" or "never"
         if request.refresh_frequency not in ["none", "never"]:
             next_refresh = calculate_next_refresh(request.refresh_frequency)
 
-            # Store the scheduled playlist
             await db.create_scheduled_playlist(
                 playlist_type="genre_mix",
                 navidrome_playlist_id=navidrome_playlist_id,
@@ -617,16 +560,10 @@ async def create_genre_playlist(
 async def get_rediscover_weekly():
     """Generate Re-Discover Weekly playlist based on listening history"""
     try:
-        # Get Navidrome client
         nav_client = get_navidrome_client()
-        
-        # Create RediscoverWeekly instance
         rediscover = RediscoverWeekly(nav_client)
-        
-        # Generate the playlist with AI curation
         tracks = await rediscover.generate_rediscover_weekly(use_ai=True)
         
-        # Extract AI curation info for response
         ai_curated = tracks[0].get("ai_curated", False) if tracks else False
         message = f"Generated Re-Discover Weekly with {len(tracks)} tracks"
         if ai_curated:
@@ -657,18 +594,13 @@ async def get_rediscover_weekly():
 async def get_rediscover_weekly_v2(library_ids: Optional[List[str]] = Query(None), db: DatabaseManager = Depends(get_db)):
     """Generate Re-Discover Weekly v2.0 playlist using temporal analysis and two-phase AI"""
     try:
-        # Get clients
         nav_client = get_navidrome_client()
         ai_client = get_ai_client()
 
-        # Get user and server IDs
         user_id = await db.get_or_create_user_id()
-        server_id = nav_client.base_url or "unknown_server"  # Use base URL as server identifier
+        server_id = nav_client.base_url or "unknown_server"
 
-        # Create ReDiscoverV2Processor instance
         processor = ReDiscoverV2Processor(nav_client, ai_client, db)
-
-        # Generate the playlist
         result = await processor.generate_playlist(user_id, server_id, library_ids)
 
         return RediscoverWeeklyV2Response(**result)
@@ -693,19 +625,15 @@ async def create_rediscover_playlist_v2(
     try:
         scheduler_logger.info(f"🎵 Starting Re-Discover v2.0 playlist creation with length {request.playlist_length}, library_ids: {request.library_ids}")
 
-        # Get clients
         nav_client = get_navidrome_client()
         ai_client = get_ai_client()
 
-        # Get user and server IDs
         user_id = await db.get_or_create_user_id()
         server_id = nav_client.base_url or "unknown_server"
 
-        # Create ReDiscoverV2Processor instance
         processor = ReDiscoverV2Processor(nav_client, ai_client, db)
 
-        # Generate the playlist
-        playlist_data = await processor.generate_playlist(user_id, server_id, request.library_ids)
+        playlist_data = await processor.generate_playlist(user_id, server_id, request.library_ids, request.playlist_length)
         tracks = playlist_data.get("tracks", [])
 
         if not tracks:
@@ -714,26 +642,24 @@ async def create_rediscover_playlist_v2(
 
         scheduler_logger.info(f"✅ Generated {len(tracks)} tracks for Re-Discover Weekly v2.0")
 
-        # Extract AI reasoning if available
+        # Read reasoning at result level first, fall back to per-track
         ai_reasoning = playlist_data.get("reasoning", "")
         ai_curated = any(track.get("ai_curated", False) for track in tracks)
 
-        # If AI curated, get reasoning from the tracks instead of Phase 1
-        if ai_curated:
-            track_reasoning = next((track.get("ai_reasoning", "") for track in tracks if track.get("ai_curated", False) and track.get("ai_reasoning")), "")
-            if track_reasoning:
-                ai_reasoning = track_reasoning
+        if not ai_reasoning:
+            ai_reasoning = next(
+                (track.get("ai_reasoning", "") for track in tracks if track.get("ai_curated", False) and track.get("ai_reasoning")),
+                ""
+            )
 
         scheduler_logger.info(f"🎵 AI curated: {ai_curated}, reasoning length: {len(ai_reasoning)}")
 
-        # Log the AI reasoning for debugging (truncated)
         if ai_reasoning and ai_curated:
             reasoning_preview = ai_reasoning[:200] + "..." if len(ai_reasoning) > 200 else ai_reasoning
             scheduler_logger.info(f"🎵 AI curation applied for Re-Discover Weekly v2.0 (reasoning length: {len(ai_reasoning)} chars): {reasoning_preview}")
         else:
             scheduler_logger.info(f"⚠️ Re-Discover Weekly v2.0 used fallback strategy")
 
-        # Create playlist name based on refresh frequency
         frequency_names = {
             "daily": "Re-Discover Daily ✨",
             "weekly": "Re-Discover Weekly ✨",
@@ -745,11 +671,9 @@ async def create_rediscover_playlist_v2(
             playlist_name += " (Fallback)"
         scheduler_logger.info(f"📝 Creating playlist: {playlist_name}")
 
-        # Extract track IDs
         track_ids = [track["id"] for track in tracks]
         scheduler_logger.info(f"🎵 Track IDs: {track_ids[:5]}... (total: {len(track_ids)})")
 
-        # Create playlist in Navidrome with reasoning as comment
         comment_to_use = ai_reasoning if ai_reasoning else f"Theme: {playlist_data.get('theme', 'Mixed')}"
         comment_preview = comment_to_use[:200] + "..." if len(comment_to_use) > 200 else comment_to_use
         scheduler_logger.info(f"💬 Creating Re-Discover v2.0 playlist with comment (length: {len(comment_to_use)}): {comment_preview}")
@@ -762,11 +686,9 @@ async def create_rediscover_playlist_v2(
         )
         scheduler_logger.info(f"✅ Navidrome playlist created: {navidrome_playlist_id}")
 
-        # Get track titles for database storage
         track_titles = [track.get("title", "Unknown") for track in tracks]
         scheduler_logger.info(f"📊 Storing {len(track_titles)} track titles in database")
 
-        # Store playlist in local database (using a synthetic artist_id for rediscover playlists)
         playlist_record = await db.create_playlist(
             artist_id="rediscover_v2",
             playlist_name=playlist_name,
@@ -778,7 +700,6 @@ async def create_rediscover_playlist_v2(
         )
         scheduler_logger.info(f"💾 Database playlist created: {playlist_record}")
 
-        # Set up scheduling if requested
         if request.refresh_frequency != "never":
             scheduler_logger.info(f"⏰ Setting up {request.refresh_frequency} refresh schedule")
             scheduled_playlist = await db.create_scheduled_playlist(
@@ -815,13 +736,9 @@ async def create_rediscover_playlist(
     try:
         scheduler_logger.info(f"🎵 Starting Re-Discover playlist creation with length {request.playlist_length}, library_ids: {request.library_ids}")
 
-        # Get Navidrome client
         nav_client = get_navidrome_client()
-
-        # Create RediscoverWeekly instance
         rediscover = RediscoverWeekly(nav_client)
 
-        # Generate the playlist tracks with user-specified length and AI curation
         scheduler_logger.info("🎵 Generating rediscover tracks...")
         tracks = await rediscover.generate_rediscover_weekly(max_tracks=request.playlist_length, use_ai=True, library_id=request.library_ids[0] if request.library_ids else "", variety_context="")
         scheduler_logger.info(f"🎵 Generated {len(tracks) if tracks else 0} tracks")
@@ -832,7 +749,6 @@ async def create_rediscover_playlist(
 
         scheduler_logger.info(f"✅ Generated {len(tracks)} tracks for Re-Discover Weekly")
 
-        # Extract AI reasoning if available
         ai_reasoning = ""
         ai_curated = False
         if tracks:
@@ -841,14 +757,12 @@ async def create_rediscover_playlist(
             ai_curated = first_track.get("ai_curated", False)
             scheduler_logger.info(f"🎵 AI curated: {ai_curated}, reasoning length: {len(ai_reasoning)}")
         
-        # Log the AI reasoning for debugging (truncated)
         if ai_reasoning and ai_curated:
             reasoning_preview = ai_reasoning[:200] + "..." if len(ai_reasoning) > 200 else ai_reasoning
             scheduler_logger.info(f"🎵 AI curation applied for Re-Discover Weekly (reasoning length: {len(ai_reasoning)} chars): {reasoning_preview}")
         else:
             scheduler_logger.info(f"⚠️ Re-Discover Weekly used algorithmic selection (no AI reasoning)")
         
-        # Create playlist name based on frequency
         frequency_names = {
             "daily": "Re-Discover Daily ✨",
             "weekly": "Re-Discover Weekly ✨",
@@ -858,11 +772,9 @@ async def create_rediscover_playlist(
         playlist_name = frequency_names.get(request.refresh_frequency, "Re-Discover Weekly ✨")
         scheduler_logger.info(f"📝 Creating playlist: {playlist_name}")
 
-        # Extract track IDs
         track_ids = [track["id"] for track in tracks]
         scheduler_logger.info(f"🎵 Track IDs: {track_ids[:5]}... (total: {len(track_ids)})")
 
-        # Create playlist in Navidrome with AI reasoning as comment if available
         comment_to_use = ai_reasoning if (ai_reasoning and ai_curated) else None
         comment_preview = comment_to_use[:200] + "..." if comment_to_use and len(comment_to_use) > 200 else comment_to_use
         scheduler_logger.info(f"💬 Creating Re-Discover playlist with comment (length: {len(comment_to_use) if comment_to_use else 0}): {comment_preview}")
@@ -875,11 +787,9 @@ async def create_rediscover_playlist(
         )
         scheduler_logger.info(f"✅ Navidrome playlist created: {navidrome_playlist_id}")
         
-        # Get track titles for database storage
         track_titles = [track["title"] for track in tracks]
         scheduler_logger.info(f"📊 Storing {len(track_titles)} track titles in database")
 
-        # Store playlist in local database (using a synthetic artist_id for rediscover playlists)
         scheduler_logger.info("💾 Creating playlist in database...")
         playlist = await db.create_playlist(
             artist_id="rediscover",
@@ -891,11 +801,9 @@ async def create_rediscover_playlist(
         )
         scheduler_logger.info(f"✅ Database playlist created: {playlist}")
         
-        # Handle scheduling if not "never"
         if request.refresh_frequency != "never":
             next_refresh = calculate_next_refresh(request.refresh_frequency)
             
-            # Store the scheduled playlist
             await db.create_scheduled_playlist(
                 playlist_type="rediscover",
                 navidrome_playlist_id=navidrome_playlist_id,
@@ -903,13 +811,11 @@ async def create_rediscover_playlist(
                 next_refresh=next_refresh
             )
             
-            # Schedule the refresh job
             schedule_playlist_refresh()
             scheduler_logger.info(f"📅 Scheduled {request.refresh_frequency} refresh for playlist: {playlist_name}")
         else:
             scheduler_logger.info(f"📅 No scheduling for playlist: {playlist_name} (refresh frequency: never)")
         
-        # Add Navidrome playlist ID to response
         playlist_dict = playlist.dict() if hasattr(playlist, 'dict') else playlist.__dict__
         playlist_dict["navidrome_playlist_id"] = navidrome_playlist_id
         playlist_dict["tracks"] = tracks
@@ -927,18 +833,15 @@ def calculate_next_refresh(frequency: str) -> datetime:
     """Calculate the next refresh time based on frequency"""
     now = datetime.now()
     if frequency == "daily":
-        # Next day at 1:00 AM
         next_day = now + timedelta(days=1)
         return next_day.replace(hour=1, minute=0, second=0, microsecond=0)
     elif frequency == "weekly":
-        # Next Monday at 1:00 AM
         days_until_monday = (7 - now.weekday()) % 7
         if days_until_monday == 0 and now.hour >= 1:
-            days_until_monday = 7  # If it's Monday after 1 AM, go to next Monday
+            days_until_monday = 7
         next_monday = now + timedelta(days=days_until_monday)
         return next_monday.replace(hour=1, minute=0, second=0, microsecond=0)
     elif frequency == "monthly":
-        # 1st of next month at 1:00 AM
         if now.month == 12:
             next_month = now.replace(year=now.year + 1, month=1, day=1, hour=1, minute=0, second=0, microsecond=0)
         else:
@@ -953,8 +856,8 @@ def schedule_playlist_refresh():
         scheduler.add_job(
             refresh_scheduled_playlists,
             'cron',
-            hour='1,13',  # Run at 1 AM and 1 PM
-            minute=1,     # Run at 1 minute past (1:01 AM and 1:01 PM)
+            hour='1,13',
+            minute=1,
             id='playlist_refresh',
             replace_existing=True
         )
@@ -965,24 +868,17 @@ async def refresh_scheduled_playlists():
     try:
         current_time = datetime.now()
         
-        # Only log heartbeat in DEBUG mode, always log when tasks are found
         if LOG_LEVEL == "DEBUG":
             scheduler_logger.debug(f"🔄 Scheduler auto-run initiated at {current_time.strftime('%H:%M:%S')}")
-        
-        if LOG_LEVEL == "DEBUG":
             scheduler_logger.debug("🔍 Checking for playlists due for refresh...")
         else:
             scheduler_logger.info("🔍 Checking for playlists due for refresh...")
         
-        # Get database path from environment variable with smart defaults
-        # Docker: /app/data/magiclists.db (set in docker-compose.yml)
-        # Standalone: ./magiclists.db (current directory)
         default_path = "/app/data/magiclists.db" if os.path.exists("/app/data") else "./magiclists.db"
         db_path = os.getenv("DATABASE_PATH", default_path)
         db = DatabaseManager(db_path)
         current_time = datetime.now()
         
-        # Get playlists due for refresh (including 7-day catch-up window)
         scheduled_playlists = await db.get_scheduled_playlists_due(current_time, grace_hours=168)
         
         if not scheduled_playlists:
@@ -991,14 +887,12 @@ async def refresh_scheduled_playlists():
             return
         
         # Group by navidrome_playlist_id to prevent duplicate processing
-        # Only process the most recent overdue refresh for each playlist
         unique_playlists = {}
         for playlist in scheduled_playlists:
             playlist_id = playlist.navidrome_playlist_id
             if playlist_id not in unique_playlists:
                 unique_playlists[playlist_id] = playlist
             else:
-                # Keep the more recent one (closer to current time)
                 existing = datetime.fromisoformat(unique_playlists[playlist_id].next_refresh)
                 current = datetime.fromisoformat(playlist.next_refresh)
                 if current > existing:
@@ -1008,30 +902,46 @@ async def refresh_scheduled_playlists():
         
         scheduler_logger.info(f"📋 Found {len(final_playlists)} playlist(s) due for refresh (deduplicated from {len(scheduled_playlists)} total)")
         
+        # Get playlist names for better logging
+        all_playlists = await db.get_all_playlists_with_schedule_info()
+        playlist_names = {p["navidrome_playlist_id"]: p["playlist_name"] for p in all_playlists}
+        
         for scheduled_playlist in final_playlists:
-            # Check if this is a catch-up refresh
-            scheduled_time = datetime.fromisoformat(scheduled_playlist.next_refresh)
-            if scheduled_time < current_time:
-                overdue_hours = (current_time - scheduled_time).total_seconds() / 3600
-                scheduler_logger.info(f"🕐 Catching up on overdue playlist {scheduled_playlist.navidrome_playlist_id} (missed by {overdue_hours:.1f} hours)")
-            
-            if scheduled_playlist.playlist_type == "rediscover":
-                await refresh_rediscover_playlist(scheduled_playlist, db)
-            elif scheduled_playlist.playlist_type == "this_is":
-                await refresh_this_is_playlist(scheduled_playlist, db)
+            try:
+                playlist_name = playlist_names.get(scheduled_playlist.navidrome_playlist_id, "Unknown")
+                scheduled_time = datetime.fromisoformat(scheduled_playlist.next_refresh)
+                if scheduled_time < current_time:
+                    overdue_hours = (current_time - scheduled_time).total_seconds() / 3600
+                    scheduler_logger.info(f"🕐 Catching up on overdue playlist '{playlist_name}' [{scheduled_playlist.navidrome_playlist_id}] (missed by {overdue_hours:.1f} hours)")
+                
+                # ── DISPATCH BY PLAYLIST TYPE ──────────────────────────────────
+                scheduler_logger.info(f"🔄 Starting refresh for '{playlist_name}' (type: {scheduled_playlist.playlist_type})")
+                
+                if scheduled_playlist.playlist_type == "rediscover":
+                    await refresh_rediscover_playlist(scheduled_playlist, db)
+                elif scheduled_playlist.playlist_type == "rediscover_weekly_v2":   # ← FIX: was silently missing
+                    await refresh_rediscover_v2_playlist(scheduled_playlist, db)
+                elif scheduled_playlist.playlist_type == "genre_mix":
+                    await refresh_genre_mix_playlist(scheduled_playlist, db)
+                elif scheduled_playlist.playlist_type == "this_is":
+                    await refresh_this_is_playlist(scheduled_playlist, db)
+                else:
+                    scheduler_logger.warning(f"⚠️ Unknown playlist type '{scheduled_playlist.playlist_type}' for '{playlist_name}' — skipping")
+            except Exception as refresh_error:
+                scheduler_logger.error(f"❌ Failed to refresh playlist '{playlist_name}' [{scheduled_playlist.navidrome_playlist_id}]: {refresh_error}")
+                import traceback
+                scheduler_logger.error(f"📋 Traceback: {traceback.format_exc()}")
                 
     except Exception as e:
         scheduler_logger.error(f"❌ Error checking scheduled playlists: {e}")
 
 async def refresh_rediscover_playlist(scheduled_playlist, db: DatabaseManager):
-    """Refresh a specific Re-Discover Weekly playlist"""
+    """Refresh a specific Re-Discover Weekly (v1) playlist"""
     try:
         scheduler_logger.info(f"🔄 Starting refresh for playlist ID: {scheduled_playlist.navidrome_playlist_id} (frequency: {scheduled_playlist.refresh_frequency})")
         
-        # Get clients
         nav_client = get_navidrome_client()
         
-        # Get original playlist to find user's preferred length
         playlists = await db.get_all_playlists_with_schedule_info()
         original_playlist = next((p for p in playlists if p.get("navidrome_playlist_id") == scheduled_playlist.navidrome_playlist_id), None)
         
@@ -1039,66 +949,44 @@ async def refresh_rediscover_playlist(scheduled_playlist, db: DatabaseManager):
             scheduler_logger.error(f"❌ Could not find original playlist data for {scheduled_playlist.navidrome_playlist_id}")
             return
         
-        # Get original playlist length (MUST respect user's choice)
         original_length = original_playlist.get("playlist_length", 20)
         scheduler_logger.info(f"🎯 Using original playlist length: {original_length}")
         
-        # Get previous playlist songs for variety context
         previous_songs = original_playlist.get("songs", [])[:10]
         variety_instruction = f"REFRESH CHALLENGE: The current playlist opens with these tracks in this order: {', '.join(previous_songs[:5])}. Your goal is to create a FRESH arrangement that tells a different musical story. You may include some of the same excellent tracks if they're rediscovery-worthy, but avoid replicating the same opening sequence or overall flow. Think creatively about re-ordering, substituting, or finding better transitions to ensure a genuinely refreshed listening experience." if previous_songs else ""
         
-        # Get AI client for v2.0 processor
         ai_client = get_ai_client()
-
-        # Get user and server IDs for v2.0 processor
         user_id = await db.get_or_create_user_id()
         server_id = nav_client.base_url or "unknown_server"
-
-        # Create ReDiscoverV2Processor instance (improved fallback handling)
         processor = ReDiscoverV2Processor(nav_client, ai_client, db)
-
-        # Prepare library IDs for v2.0 processor
         library_ids = [scheduled_playlist.library_id] if hasattr(scheduled_playlist, 'library_id') and scheduled_playlist.library_id else None
 
-        # Log refresh context for debugging
         scheduler_logger.info(f"🔄 Re-Discover v2.0 refresh context - Previous tracks: {len(previous_songs)}, Library IDs: {library_ids}")
 
-        # Generate new tracks using v2.0 processor with improved fallback handling
         result = await processor.generate_playlist(user_id, server_id, library_ids)
-
-        # Extract tracks from v2.0 result format
         tracks = result.get("tracks", [])
-
-        # Ensure tracks have the expected format for the rest of the refresh logic
-        # The v2.0 tracks should already have ai_curated and ai_reasoning fields
-        
-        # The rediscover.generate_rediscover_weekly() method now uses the new recipe system internally
         
         if tracks:
             scheduler_logger.info(f"🎵 Generated {len(tracks)} new tracks for refresh")
             
-            # VALIDATE: Ensure we got the expected number of tracks
             if len(tracks) != original_length:
                 scheduler_logger.warning(f"⚠️ Generated {len(tracks)} tracks but user requested {original_length}")
             else:
                 scheduler_logger.info(f"✅ Generated exact number of requested tracks: {len(tracks)}")
             
-            # Extract AI reasoning if available
-            ai_reasoning = ""
-            ai_curated = False
-            if tracks:
-                first_track = tracks[0]
-                ai_reasoning = first_track.get("ai_reasoning", "")
-                ai_curated = first_track.get("ai_curated", False)
+            # Read reasoning at result level first, fall back to per-track
+            ai_reasoning = result.get("reasoning", "")
+            ai_curated = result.get("ai_curated", False)
+            if not ai_reasoning:
+                ai_reasoning = next((t.get("ai_reasoning", "") for t in tracks if t.get("ai_reasoning")), "")
+                ai_curated = any(t.get("ai_curated", False) for t in tracks)
             
-            # Log the AI reasoning for scheduled refresh (truncated)
             if ai_reasoning and ai_curated:
                 reasoning_preview = ai_reasoning[:200] + "..." if len(ai_reasoning) > 200 else ai_reasoning
                 scheduler_logger.info(f"🎵 AI curation applied for scheduled Re-Discover refresh (reasoning length: {len(ai_reasoning)} chars): {reasoning_preview}")
             else:
                 scheduler_logger.info(f"⚠️ Scheduled Re-Discover refresh used algorithmic selection")
             
-            # Update the existing playlist in Navidrome with reasoning
             track_ids = [track["id"] for track in tracks]
             comment_to_use = ai_reasoning if (ai_reasoning and ai_curated) else "Re-Discover Weekly v2.0 - Automatically refreshed"
             await nav_client.update_playlist(
@@ -1107,7 +995,6 @@ async def refresh_rediscover_playlist(scheduled_playlist, db: DatabaseManager):
                 comment=comment_to_use
             )
             
-            # Update the local database with new songs and reasoning
             track_titles = [track["title"] for track in tracks]
             reasoning_to_store = ai_reasoning if ai_curated else "Algorithmic selection"
             await db.update_playlist_content(
@@ -1116,14 +1003,8 @@ async def refresh_rediscover_playlist(scheduled_playlist, db: DatabaseManager):
                 reasoning=reasoning_to_store
             )
             
-            # Calculate next refresh time
             next_refresh = calculate_next_refresh(scheduled_playlist.refresh_frequency)
-            
-            # Update the scheduled playlist record
-            await db.update_scheduled_playlist_next_refresh(
-                scheduled_playlist.id, 
-                next_refresh
-            )
+            await db.update_scheduled_playlist_next_refresh(scheduled_playlist.id, next_refresh)
             
             scheduler_logger.info(f"✅ Successfully refreshed playlist {scheduled_playlist.navidrome_playlist_id}. Next refresh: {next_refresh.strftime('%Y-%m-%d %H:%M:%S')}")
         else:
@@ -1132,16 +1013,178 @@ async def refresh_rediscover_playlist(scheduled_playlist, db: DatabaseManager):
     except Exception as e:
         scheduler_logger.error(f"❌ Error refreshing playlist {scheduled_playlist.navidrome_playlist_id}: {e}")
 
+
+async def refresh_rediscover_v2_playlist(scheduled_playlist, db: DatabaseManager):
+    """Refresh a specific Re-Discover Weekly v2.0 playlist"""
+    try:
+        scheduler_logger.info(f"🔄 Starting v2.0 refresh for playlist {scheduled_playlist.navidrome_playlist_id} (frequency: {scheduled_playlist.refresh_frequency})")
+
+        nav_client = get_navidrome_client()
+        ai_client = get_ai_client()
+
+        library_ids = [scheduled_playlist.library_id] if hasattr(scheduled_playlist, 'library_id') and scheduled_playlist.library_id else None
+
+        user_id = await db.get_or_create_user_id()
+        server_id = nav_client.base_url or "unknown_server"
+
+        processor = ReDiscoverV2Processor(nav_client, ai_client, db)
+        result = await processor.generate_playlist(user_id, server_id, library_ids)
+        tracks = result.get("tracks", [])
+
+        if not tracks:
+            scheduler_logger.warning(f"⚠️ No tracks generated for v2.0 refresh of {scheduled_playlist.navidrome_playlist_id}")
+            return
+
+        scheduler_logger.info(f"🎵 Generated {len(tracks)} tracks for v2.0 refresh")
+
+        # Read reasoning at result level first, fall back to per-track
+        ai_reasoning = result.get("reasoning", "")
+        ai_curated = result.get("ai_curated", False)
+        if not ai_reasoning:
+            ai_reasoning = next(
+                (t.get("ai_reasoning", "") for t in tracks if t.get("ai_reasoning")),
+                ""
+            )
+            ai_curated = any(t.get("ai_curated", False) for t in tracks)
+
+        if ai_reasoning and ai_curated:
+            reasoning_preview = ai_reasoning[:200] + "..." if len(ai_reasoning) > 200 else ai_reasoning
+            scheduler_logger.info(f"🎵 AI curation applied for v2.0 refresh (reasoning length: {len(ai_reasoning)} chars): {reasoning_preview}")
+        else:
+            scheduler_logger.info(f"⚠️ v2.0 refresh used fallback/algorithmic selection")
+
+        comment = ai_reasoning if ai_reasoning else "Re-Discover v2.0 - Automatically refreshed"
+        track_ids = [track["id"] for track in tracks]
+
+        await nav_client.update_playlist(
+            playlist_id=scheduled_playlist.navidrome_playlist_id,
+            track_ids=track_ids,
+            comment=comment
+        )
+
+        track_titles = [track.get("title", "Unknown") for track in tracks]
+        await db.update_playlist_content(
+            navidrome_playlist_id=scheduled_playlist.navidrome_playlist_id,
+            songs=track_titles,
+            reasoning=ai_reasoning or "Algorithmic selection"
+        )
+
+        next_refresh = calculate_next_refresh(scheduled_playlist.refresh_frequency)
+        await db.update_scheduled_playlist_next_refresh(scheduled_playlist.id, next_refresh)
+
+        scheduler_logger.info(f"✅ v2.0 refresh complete for {scheduled_playlist.navidrome_playlist_id}. Next: {next_refresh.strftime('%Y-%m-%d %H:%M:%S')}")
+
+    except Exception as e:
+        scheduler_logger.error(f"❌ Error in v2.0 refresh for {scheduled_playlist.navidrome_playlist_id}: {e}")
+
+
+async def refresh_genre_mix_playlist(scheduled_playlist, db: DatabaseManager):
+    """Refresh a scheduled Genre Mix playlist"""
+    try:
+        scheduler_logger.info(f"🔄 Starting refresh for Genre Mix playlist {scheduled_playlist.navidrome_playlist_id} (frequency: {scheduled_playlist.refresh_frequency})")
+
+        nav_client = get_navidrome_client()
+        ai_client_instance = get_ai_client()
+
+        playlists = await db.get_all_playlists_with_schedule_info()
+        original_playlist = next(
+            (p for p in playlists if p.get("navidrome_playlist_id") == scheduled_playlist.navidrome_playlist_id),
+            None
+        )
+
+        if not original_playlist:
+            scheduler_logger.error(f"❌ Could not find original playlist data for {scheduled_playlist.navidrome_playlist_id}")
+            return
+
+        genre = original_playlist.get("artist_id")
+        if not genre:
+            scheduler_logger.error(f"❌ Missing genre metadata for playlist {scheduled_playlist.navidrome_playlist_id}")
+            return
+
+        playlist_length = original_playlist.get("playlist_length") or 25
+        library_ids = original_playlist.get("library_ids") or None
+
+        all_tracks = await nav_client.get_tracks_by_genre(genre, library_ids)
+
+        if not all_tracks:
+            scheduler_logger.warning(f"⚠️ No tracks found for genre '{genre}' during refresh of {scheduled_playlist.navidrome_playlist_id}")
+            return
+
+        library_stats = await nav_client.get_library_stats()
+        filtered_tracks, filter_metadata = filter_tracks_for_this_is_playlist(
+            source_tracks=all_tracks,
+            target_playlist_size=playlist_length,
+            library_stats=library_stats
+        )
+
+        if filter_metadata["filtered"]:
+            scheduler_logger.info(f"🎯 Smart filtering applied: {filter_metadata['source_count']} → {filter_metadata['sent_count']} tracks (multiplier: {filter_metadata['threshold_multiplier']}x)")
+            scheduler_logger.info(f"📊 Score range: {filter_metadata['score_range']['highest']:.1f} - {filter_metadata['score_range']['lowest']:.1f} (cutoff: {filter_metadata['score_range']['cutoff']:.1f})")
+        else:
+            scheduler_logger.info(f"✅ No filtering needed: {filter_metadata['source_count']} tracks below threshold")
+
+        curation_result = await ai_client_instance.curate_genre_mix(
+            genre=genre,
+            tracks_json=filtered_tracks,
+            num_tracks=playlist_length,
+            include_reasoning=True
+        )
+
+        if isinstance(curation_result, tuple):
+            curated_track_ids, reasoning = curation_result
+        else:
+            curated_track_ids = curation_result
+            reasoning = ""
+
+        if not curated_track_ids:
+            scheduler_logger.warning(f"⚠️ AI curation returned no tracks for Genre Mix refresh of {scheduled_playlist.navidrome_playlist_id}")
+            return
+
+        if reasoning:
+            reasoning_preview = reasoning[:200] + "..." if len(reasoning) > 200 else reasoning
+            scheduler_logger.info(f"🎵 AI curation applied for genre '{genre}' (reasoning length: {len(reasoning)} chars): {reasoning_preview}")
+        else:
+            scheduler_logger.info(f"⚠️ No AI reasoning provided for genre refresh '{genre}'")
+
+        comment_to_use = reasoning if reasoning else None
+        comment_preview = comment_to_use[:200] + "..." if comment_to_use and len(comment_to_use) > 200 else comment_to_use
+        scheduler_logger.info(f"💬 Updating playlist with comment (length: {len(comment_to_use) if comment_to_use else 0}): {comment_preview}")
+
+        await nav_client.update_playlist(
+            playlist_id=scheduled_playlist.navidrome_playlist_id,
+            track_ids=curated_track_ids,
+            comment=comment_to_use
+        )
+
+        track_titles = []
+        track_id_to_title = {track["id"]: track["title"] for track in all_tracks}
+        for track_id in curated_track_ids:
+            if track_id in track_id_to_title:
+                track_titles.append(track_id_to_title[track_id])
+
+        await db.update_playlist_content(
+            navidrome_playlist_id=scheduled_playlist.navidrome_playlist_id,
+            songs=track_titles,
+            reasoning=reasoning or "Genre Mix refresh"
+        )
+
+        next_refresh = calculate_next_refresh(scheduled_playlist.refresh_frequency)
+        await db.update_scheduled_playlist_next_refresh(scheduled_playlist.id, next_refresh)
+
+        scheduler_logger.info(f"✅ Successfully refreshed Genre Mix playlist {scheduled_playlist.navidrome_playlist_id}. Next refresh: {next_refresh.strftime('%Y-%m-%d %H:%M:%S')}")
+
+    except Exception as e:
+        scheduler_logger.error(f"❌ Error refreshing Genre Mix playlist {scheduled_playlist.navidrome_playlist_id}: {e}")
+
+
 async def refresh_this_is_playlist(scheduled_playlist, db: DatabaseManager):
     """Refresh a specific This Is playlist"""
     try:
         scheduler_logger.info(f"🔄 Starting refresh for This Is playlist ID: {scheduled_playlist.navidrome_playlist_id} (frequency: {scheduled_playlist.refresh_frequency})")
         
-        # Get clients
         nav_client = get_navidrome_client()
         ai_client_instance = get_ai_client()
         
-        # Find the original playlist to get artist info
         playlists = await db.get_all_playlists_with_schedule_info()
         original_playlist = next((p for p in playlists if p.get("navidrome_playlist_id") == scheduled_playlist.navidrome_playlist_id), None)
         
@@ -1149,11 +1192,8 @@ async def refresh_this_is_playlist(scheduled_playlist, db: DatabaseManager):
             scheduler_logger.error(f"❌ Could not find original playlist data for {scheduled_playlist.navidrome_playlist_id}")
             return
         
-        # Get artist IDs from the original playlist (we'll need to store this better in future)
-        # For now, we'll use the artist_id field, but this limits us to single artists for refresh
         artist_id = original_playlist["artist_id"]
         
-        # Get all artists to find the name
         all_artists = await nav_client.get_artists()
         artist = next((a for a in all_artists if a["id"] == artist_id), None)
         
@@ -1163,29 +1203,23 @@ async def refresh_this_is_playlist(scheduled_playlist, db: DatabaseManager):
         
         artist_name = artist["name"]
         
-        # FRESH DATA: Re-fetch ALL tracks for the artist (gets latest play counts, dates)
         tracks = await nav_client.get_tracks_by_artist(artist_id)
         
         if tracks:
             scheduler_logger.info(f"🎵 Found {len(tracks)} tracks for artist: {artist_name} (fresh data)")
             
-            # ENFORCE original playlist length (MUST respect user's choice)
             original_length = original_playlist.get("playlist_length", 25)
             scheduler_logger.info(f"🎯 ENFORCING original playlist length: {original_length}")
             
-            # Check if we have enough tracks
             if len(tracks) < original_length:
                 scheduler_logger.warning(f"⚠️ Artist only has {len(tracks)} tracks, but user requested {original_length}. Using all available tracks.")
                 original_length = len(tracks)
             
-            # Get previous playlist songs for STRONG variety enforcement
             previous_songs = original_playlist.get("songs", [])
             variety_instruction = f"REFRESH CONSTRAINT: This is a REFRESH, not a copy. Previous playlist had these tracks: {', '.join(previous_songs[:10])}. Create a completely different track selection and arrangement. Prioritize tracks NOT in the previous list. Tell a fresh musical story. Avoid identical opening sequences." if previous_songs else "Create a fresh, engaging playlist arrangement."
             
-            # Prepare tracks with variety instruction - use a more direct approach
             tracks_for_ai = tracks.copy()
             
-            # Use AI to curate a FRESH playlist with STRONG variety enforcement
             curation_result = await ai_client_instance.curate_this_is(
                 artist_name=artist_name,
                 tracks_json=tracks_for_ai,
@@ -1194,7 +1228,6 @@ async def refresh_this_is_playlist(scheduled_playlist, db: DatabaseManager):
                 variety_context=variety_instruction
             )
             
-            # Handle both old and new return formats
             if isinstance(curation_result, tuple):
                 curated_track_ids, reasoning = curation_result
             else:
@@ -1202,10 +1235,8 @@ async def refresh_this_is_playlist(scheduled_playlist, db: DatabaseManager):
                 reasoning = ""
             
             if curated_track_ids:
-                # VALIDATE: Ensure we got the right number of tracks
                 if len(curated_track_ids) < original_length and len(tracks) >= original_length:
                     scheduler_logger.warning(f"⚠️ AI returned only {len(curated_track_ids)} tracks but user requested {original_length}. Using fallback to fill gap.")
-                    # Fill the gap with remaining tracks
                     used_ids = set(curated_track_ids)
                     remaining_tracks = [t for t in tracks if t["id"] not in used_ids]
                     additional_needed = original_length - len(curated_track_ids)
@@ -1214,14 +1245,12 @@ async def refresh_this_is_playlist(scheduled_playlist, db: DatabaseManager):
                 
                 scheduler_logger.info(f"🎯 Final track count: {len(curated_track_ids)} (requested: {original_length})")
                 
-                # Update the existing playlist in Navidrome with new reasoning
                 await nav_client.update_playlist(
                     playlist_id=scheduled_playlist.navidrome_playlist_id,
                     track_ids=curated_track_ids,
                     comment=reasoning if reasoning else None
                 )
                 
-                # Update the local database with new songs and reasoning
                 track_titles = []
                 track_id_to_title = {track["id"]: track["title"] for track in tracks}
                 for track_id in curated_track_ids:
@@ -1234,14 +1263,8 @@ async def refresh_this_is_playlist(scheduled_playlist, db: DatabaseManager):
                     reasoning=reasoning
                 )
                 
-                # Calculate next refresh time
                 next_refresh = calculate_next_refresh(scheduled_playlist.refresh_frequency)
-                
-                # Update the scheduled playlist record
-                await db.update_scheduled_playlist_next_refresh(
-                    scheduled_playlist.id, 
-                    next_refresh
-                )
+                await db.update_scheduled_playlist_next_refresh(scheduled_playlist.id, next_refresh)
                 
                 scheduler_logger.info(f"✅ Successfully refreshed This Is playlist {scheduled_playlist.navidrome_playlist_id}. Next refresh: {next_refresh.strftime('%Y-%m-%d %H:%M:%S')}")
             else:
@@ -1257,7 +1280,6 @@ async def get_all_playlists(db: DatabaseManager = Depends(get_db)):
     """Get all playlists with scheduling information"""
     try:
         playlists = await db.get_all_playlists_with_schedule_info()
-        # Add track count to each playlist
         for playlist in playlists:
             songs = playlist.get("songs", [])
             playlist["track_count"] = len(songs) if isinstance(songs, list) else 0
@@ -1269,14 +1291,11 @@ async def get_all_playlists(db: DatabaseManager = Depends(get_db)):
 async def delete_playlist(playlist_id: int, db: DatabaseManager = Depends(get_db)):
     """Delete a playlist from both local database and Navidrome"""
     try:
-        # First, get the specific playlist to find the Navidrome playlist ID
-        # Use a direct query instead of fetching all playlists
         playlist = await db.get_playlist_by_id_with_schedule_info(playlist_id)
         
         if not playlist:
             raise HTTPException(status_code=404, detail="Playlist not found")
         
-        # Delete from Navidrome if we have a playlist ID
         navidrome_playlist_id = playlist.get("navidrome_playlist_id")
         if navidrome_playlist_id:
             nav_client = get_navidrome_client()
@@ -1286,15 +1305,12 @@ async def delete_playlist(playlist_id: int, db: DatabaseManager = Depends(get_db
                 print(f"✅ Navidrome deletion result: {deletion_result}")
             except Exception as e:
                 print(f"❌ Warning: Failed to delete playlist from Navidrome: {e}")
-                # Continue with local deletion even if Navidrome deletion fails
         else:
             print(f"⚠️ No Navidrome playlist ID found for local playlist {playlist_id}, skipping Navidrome deletion")
         
-        # Delete from scheduled playlists if it exists
         if navidrome_playlist_id:
             await db.delete_scheduled_playlist_by_navidrome_id(navidrome_playlist_id)
         
-        # Delete from local database
         success = await db.delete_playlist(playlist_id)
         
         if not success:
@@ -1375,6 +1391,55 @@ async def trigger_scheduler_check():
         scheduler_logger.error(f"❌ Error in manual scheduler trigger: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to trigger scheduler: {str(e)}")
 
+@app.post("/api/playlists/{navidrome_playlist_id}/refresh")
+async def force_refresh_playlist(navidrome_playlist_id: str, db: DatabaseManager = Depends(get_db)):
+    """Force an immediate refresh of a specific playlist, regardless of its schedule"""
+    try:
+        scheduler_logger.info(f"🧪 Manual refresh requested for playlist {navidrome_playlist_id}")
+        
+        # Get all scheduled playlists
+        scheduled_playlists = await db.get_scheduled_playlists()
+        
+        # Find the requested playlist
+        target_playlist = next((p for p in scheduled_playlists if p.navidrome_playlist_id == navidrome_playlist_id), None)
+        
+        if not target_playlist:
+            raise HTTPException(status_code=404, detail="Playlist not found or not scheduled for refresh")
+            
+        all_playlists = await db.get_all_playlists_with_schedule_info()
+        playlist_name = next((p["playlist_name"] for p in all_playlists if p["navidrome_playlist_id"] == navidrome_playlist_id), "Unknown")
+        
+        scheduler_logger.info(f"🔄 Force starting refresh for '{playlist_name}' (type: {target_playlist.playlist_type})")
+        
+        # Dispatch to the correct handler
+        if target_playlist.playlist_type == "rediscover":
+            await refresh_rediscover_playlist(target_playlist, db)
+        elif target_playlist.playlist_type == "rediscover_weekly_v2":
+            await refresh_rediscover_v2_playlist(target_playlist, db)
+        elif target_playlist.playlist_type == "genre_mix":
+            await refresh_genre_mix_playlist(target_playlist, db)
+        elif target_playlist.playlist_type == "this_is":
+            await refresh_this_is_playlist(target_playlist, db)
+        else:
+            raise HTTPException(status_code=400, detail=f"Unknown playlist type '{target_playlist.playlist_type}'")
+            
+        # Update the next refresh time since we just refreshed it
+        current_time = datetime.now()
+        await db.update_scheduled_playlist_time(
+            navidrome_playlist_id=navidrome_playlist_id,
+            next_refresh=current_time  # Will be pushed forward by the refresh functions
+        )
+            
+        return {"message": f"Successfully refreshed playlist '{playlist_name}'"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        scheduler_logger.error(f"❌ Error forcing playlist refresh: {e}")
+        import traceback
+        scheduler_logger.error(f"📋 Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Failed to refresh playlist: {str(e)}")
+
 @app.post("/api/scheduler/start")
 async def start_scheduler_job():
     """Manually start the recurring scheduler job"""
@@ -1413,16 +1478,13 @@ async def get_ai_model_info():
 async def track_library_size(db: DatabaseManager = Depends(get_db)):
     """Track library size for analytics (called post-launch)"""
     try:
-        # Check if we should track (90+ days since last tracking)
         should_track = await db.should_track_library_size()
         if not should_track:
             return {"message": "Library size tracking not needed yet", "tracked": False}
         
-        # Get Navidrome client and query library size
         nav_client = get_navidrome_client()
         song_count = await nav_client.get_total_song_count()
         
-        # Get or create user ID and record the data
         user_id = await db.get_or_create_user_id()
         await db.record_library_size(song_count)
         
@@ -1443,35 +1505,28 @@ async def track_library_size(db: DatabaseManager = Depends(get_db)):
 @app.get("/{path:path}", response_class=HTMLResponse)
 async def spa_router(request: Request, path: str):
     """Handle SPA routing - serve app for known paths, redirect unknown paths"""
-    # Known SPA paths - serve the app and let frontend handle routing
     spa_paths = ["this-is", "re-discover", "playlists", "terms"]
     
     if path in spa_paths:
-        # Apply same system check logic as root
         if not system_check_passed:
             from fastapi.responses import RedirectResponse
             return RedirectResponse(url="/system-check", status_code=302)
         return templates.TemplateResponse("index.html", {"request": request})
     
-    # Unknown paths - redirect to home
     from fastapi.responses import RedirectResponse
     return RedirectResponse(url="/", status_code=302)
 
 if __name__ == "__main__":
-    # Custom logging config to filter out Umami heartbeat requests
     import uvicorn.config
     
     class FilteredUvicornFormatter(uvicorn.formatters.DefaultFormatter):
         def format(self, record):
-            # Filter out GET / requests (Umami heartbeats) from access logs
             if hasattr(record, 'args') and record.args:
-                # Look for GET / HTTP patterns in the log message
                 message = str(record.args[2]) if len(record.args) > 2 else ""
                 if 'GET / HTTP' in message:
-                    return ""  # Return empty string to suppress this log
+                    return ""
             return super().format(record)
     
-    # Configure uvicorn with custom formatter
     log_config = uvicorn.config.LOGGING_CONFIG
     log_config["formatters"]["access"]["()"] = FilteredUvicornFormatter
     

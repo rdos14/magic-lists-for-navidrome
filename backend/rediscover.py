@@ -492,13 +492,14 @@ class ReDiscoverV2Processor:
             "enable_fallback": True
         }
 
-    async def generate_playlist(self, user_id: str, server_id: str, library_ids: Optional[List[str]] = None) -> Dict[str, Any]:
+    async def generate_playlist(self, user_id: str, server_id: str, library_ids: Optional[List[str]] = None, track_count: int = 25) -> Dict[str, Any]:
         """
         Main entry point for Re-Discover Weekly v2.0 generation.
         Returns playlist data ready for Navidrome creation.
         """
         try:
-            print(f"🎵 Re-Discover Weekly v2.0: Starting generation for user {user_id}, server {server_id}")
+            self.config["track_count"] = max(1, track_count)
+            print(f"🎵 Re-Discover Weekly v2.0: Starting generation for user {user_id}, server {server_id} with {self.config['track_count']} tracks")
 
             # Phase 0: Context Gathering
             print("📊 Phase 0: Gathering context...")
@@ -598,7 +599,10 @@ class ReDiscoverV2Processor:
 
             # Add library filter if specified
             if library_ids and len(library_ids) > 0:
+                print(f"🎵 Using library filter: musicFolderId={library_ids[0]}")
                 params["musicFolderId"] = library_ids[0]
+            else:
+                print("🎵 No library filter specified")
 
             response = await self.navidrome_client.client.get(
                 f"{self.navidrome_client.base_url}/rest/getRandomSongs.view",
@@ -608,10 +612,29 @@ class ReDiscoverV2Processor:
             data = response.json()
 
             songs = data.get("subsonic-response", {}).get("randomSongs", {}).get("song", [])
-            return songs if isinstance(songs, list) else []
+            result = songs if isinstance(songs, list) else []
+            print(f"🎵 getRandomSongs returned {len(result)} tracks")
+            
+            if not result and library_ids and len(library_ids) > 0:
+                # If no songs returned with library filter, try without it
+                print(f"⚠️ No songs returned with library filter, retrying without musicFolderId...")
+                params.pop("musicFolderId", None)
+                response = await self.navidrome_client.client.get(
+                    f"{self.navidrome_client.base_url}/rest/getRandomSongs.view",
+                    params=params
+                )
+                response.raise_for_status()
+                data = response.json()
+                songs = data.get("subsonic-response", {}).get("randomSongs", {}).get("song", [])
+                result = songs if isinstance(songs, list) else []
+                print(f"🎵 Retry without library filter returned {len(result)} tracks")
+            
+            return result
 
         except Exception as e:
             print(f"❌ Failed to sample library: {e}")
+            import traceback
+            print(f"📋 Full traceback: {traceback.format_exc()}")
             return []
 
     def _filter_to_target_period(self, tracks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -861,7 +884,22 @@ class ReDiscoverV2Processor:
             data = response.json()
 
             songs = data.get("subsonic-response", {}).get("randomSongs", {}).get("song", [])
-            return songs if isinstance(songs, list) else []
+            result = songs if isinstance(songs, list) else []
+            
+            if not result and library_ids and len(library_ids) > 0:
+                # If no songs returned with library filter, try without it
+                print(f"⚠️ No songs returned with library filter for year range {start_year}-{end_year}, retrying without musicFolderId...")
+                params.pop("musicFolderId", None)
+                response = await self.navidrome_client.client.get(
+                    f"{self.navidrome_client.base_url}/rest/getRandomSongs.view",
+                    params=params
+                )
+                response.raise_for_status()
+                data = response.json()
+                songs = data.get("subsonic-response", {}).get("randomSongs", {}).get("song", [])
+                result = songs if isinstance(songs, list) else []
+            
+            return result
 
         except Exception as e:
             print(f"❌ Year range search failed: {e}")

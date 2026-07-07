@@ -180,32 +180,19 @@ class AIProvider:
 
         headers = {"Content-Type": "application/json"}
 
-        # Debug: Save payload to file for inspection
-        import json
+        # FIX: Debug payload write is wrapped in try/except so a missing
+        # directory never crashes the actual AI call in production.
         import time
         timestamp = int(time.time())
-
-        # Add debug info to payload
-        debug_info = {
-            "timestamp": timestamp,
-            "model": self.model,
-            "max_tokens_param": max_tokens,
-            "max_output_tokens_calculated": generation_config.get("maxOutputTokens"),
-            "combined_prompt_length": len(combined_prompt),
-            "system_prompt_length": len(system_prompt),
-            "user_prompt_length": len(user_prompt),
-            "is_genre_mix": "Genre Mix" in system_prompt or "genre_mix" in user_prompt.lower()
-        }
-
-        payload_with_debug = {
-            "debug_info": debug_info,
-            "payload": payload
-        }
-
-        payload_file = f"payloads/google_ai_payload_{timestamp}.json"
-        with open(payload_file, 'w') as f:
-            json.dump(payload, f, indent=2)
-        print(f"📄 Saved payload to {payload_file} (prompt: ~{len(combined_prompt)//4} tokens)")
+        try:
+            os.makedirs("payloads", exist_ok=True)
+            payload_file = f"payloads/google_ai_payload_{timestamp}.json"
+            with open(payload_file, 'w') as f:
+                json.dump(payload, f, indent=2)
+            print(f"📄 Saved payload to {payload_file} (prompt: ~{len(combined_prompt)//4} tokens)")
+        except Exception as debug_err:
+            # Debug tooling should never take down a production request
+            print(f"📄 Debug payload write skipped: {debug_err}")
 
         try:
             response = await self.client.post(
@@ -269,8 +256,10 @@ class AIProvider:
 
             raise Exception("Google AI response missing candidates array")
 
+        except httpx.RequestError as e:
+            raise Exception(f"Google AI request error: {e.__class__.__name__}: {e}") from e
         except Exception as e:
-            raise Exception(f"Google AI error: {str(e)}")
+            raise Exception(f"Google AI error: {e.__class__.__name__}: {e}") from e
 
     async def close(self):
         """Close the HTTP client"""

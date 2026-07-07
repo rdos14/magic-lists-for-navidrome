@@ -988,10 +988,10 @@ Return JSON: {{"track_ids": [indices], "reasoning": "summary"}}"""
                 print(f"🤖 Model: {self.model}")
                 return self._fallback_genre_mix_selection(tracks_json, num_tracks, include_reasoning, f"HTTP {e.response.status_code}: {response_text}")
         except Exception as e:
-            print(f"💥 Unexpected error in Genre Mix AI curation: {e}")
+            print(f"💥 Unexpected error in Genre Mix AI curation: {e.__class__.__name__}: {e}")
             import traceback
             print(f"📋 Traceback: {traceback.format_exc()}")
-            return self._fallback_genre_mix_selection(tracks_json, num_tracks, include_reasoning, f"Unexpected error: {e}")
+            return self._fallback_genre_mix_selection(tracks_json, num_tracks, include_reasoning, f"Unexpected error: {e.__class__.__name__}: {e}")
 
     def _fallback_genre_mix_selection(self, tracks_json: List[Dict[str, Any]], num_tracks: int, include_reasoning: bool = False, error_reason: str = "AI service was unavailable") -> Union[List[str], Tuple[List[str], str]]:
         """Fallback selection algorithm for genre mix when AI is unavailable"""
