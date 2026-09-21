@@ -354,13 +354,13 @@ Return JSON: {{"track_ids": [indices], "reasoning": "summary"}}"""
                 print(f"Failed to parse AI response: {e}")
                 print(f"Response content: {content}")
                 # Fall back to simple selection
-                return self._fallback_rediscover_selection(candidate_tracks, num_tracks, include_reasoning)
+                return self._fallback_rediscover_selection(tracks_json, num_tracks, include_reasoning)
                 
         except httpx.RequestError as e:
             print(f"🌐 Network error calling AI API: {e}")
             print(f"🔑 API Key present: {bool(self.api_key)}")
             print(f"🌐 Base URL: {self.base_url}")
-            return self._fallback_rediscover_selection(candidate_tracks, num_tracks, include_reasoning, f"Network error: {e}")
+            return self._fallback_rediscover_selection(tracks_json, num_tracks, include_reasoning, f"Network error: {e}")
         except httpx.HTTPStatusError as e:
             response_text = e.response.text
             
@@ -379,18 +379,18 @@ Return JSON: {{"track_ids": [indices], "reasoning": "summary"}}"""
                 else:
                     user_message = f"AI service error (HTTP {e.response.status_code}). Please try again."
                     
-                return self._fallback_rediscover_selection(candidate_tracks, num_tracks, include_reasoning, user_message)
+                return self._fallback_rediscover_selection(tracks_json, num_tracks, include_reasoning, user_message)
             else:
                 # Normal error response, log as before
                 print(f"🚨 HTTP error from AI API: {e.response.status_code} - {response_text}")
                 print(f"🔑 API Key present: {bool(self.api_key)}")
                 print(f"🤖 Model: {self.model}")
-                return self._fallback_rediscover_selection(candidate_tracks, num_tracks, include_reasoning, f"HTTP {e.response.status_code}: {response_text}")
+                return self._fallback_rediscover_selection(tracks_json, num_tracks, include_reasoning, f"HTTP {e.response.status_code}: {response_text}")
         except Exception as e:
             print(f"💥 Unexpected error in Re-Discover Weekly AI curation: {e}")
             import traceback
             print(f"📋 Traceback: {traceback.format_exc()}")
-            return self._fallback_rediscover_selection(candidate_tracks, num_tracks, include_reasoning, f"Unexpected error: {e}")
+            return self._fallback_rediscover_selection(tracks_json, num_tracks, include_reasoning, f"Unexpected error: {e}")
 
     async def curate_rediscover_weekly(
         self,
