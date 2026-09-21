@@ -817,6 +817,37 @@ class NavidromeClient:
         except Exception as e:
             raise Exception(f"Unexpected error fetching genre stats: {e}")
 
+    async def get_playlists(self) -> List[Dict[str, str]]:
+        """Fetch the user's playlists from Navidrome for ID reconciliation."""
+        try:
+            await self._ensure_authenticated()
+
+            response = await self.client.get(
+                f"{self.base_url}/rest/getPlaylists.view",
+                params=self._get_subsonic_params()
+            )
+            response.raise_for_status()
+
+            data = response.json()
+            subsonic_response = data.get("subsonic-response", {})
+            if subsonic_response.get("status") != "ok":
+                error = subsonic_response.get("error", {})
+                raise Exception(f"Subsonic API error: {error.get('message', 'Unknown error')}")
+
+            playlist_items = subsonic_response.get("playlists", {}).get("playlist", [])
+            return [
+                {"id": item["id"], "name": item.get("name", "")}
+                for item in playlist_items
+                if item.get("id")
+            ]
+
+        except httpx.RequestError as e:
+            raise Exception(f"Network error connecting to Navidrome: {e}")
+        except httpx.HTTPStatusError as e:
+            raise Exception(f"HTTP error from Navidrome: {e.response.status_code}")
+        except Exception as e:
+            raise Exception(f"Unexpected error fetching playlists: {e}")
+
     async def create_playlist(self, name: str, track_ids: List[str], comment: str = None) -> str:
         """Create a new playlist in Navidrome using Subsonic API
         

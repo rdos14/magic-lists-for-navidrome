@@ -538,6 +538,33 @@ class DatabaseManager:
 
             await db.commit()
             return cursor.rowcount > 0
+
+    async def relink_navidrome_playlist(self, old_playlist_id: str, new_playlist_id: str) -> bool:
+        """Replace a stale Navidrome playlist ID in all local records.
+
+        Navidrome can generate a new ID after a restore or migration while the
+        playlist keeps the same name. Keep the local playlist and schedule
+        joined to the new remote ID without changing playlist contents.
+        """
+        if not old_playlist_id or not new_playlist_id or old_playlist_id == new_playlist_id:
+            return False
+
+        await self.init_db()
+
+        async with aiosqlite.connect(self.db_path) as db:
+            playlist_cursor = await db.execute("""
+                UPDATE playlists
+                SET navidrome_playlist_id = ?
+                WHERE navidrome_playlist_id = ?
+            """, (new_playlist_id, old_playlist_id))
+            scheduled_cursor = await db.execute("""
+                UPDATE scheduled_playlists
+                SET navidrome_playlist_id = ?
+                WHERE navidrome_playlist_id = ?
+            """, (new_playlist_id, old_playlist_id))
+
+            await db.commit()
+            return (playlist_cursor.rowcount + scheduled_cursor.rowcount) > 0
     
     async def update_playlist_last_refreshed(self, navidrome_playlist_id: str) -> bool:
         """Update the last_refreshed timestamp for a playlist"""

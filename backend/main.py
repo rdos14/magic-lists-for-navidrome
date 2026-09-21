@@ -863,6 +863,47 @@ def schedule_playlist_refresh():
         )
         scheduler_logger.info("🔄 Playlist refresh job scheduled to run every 12 hours (1:01 AM and 1:01 PM)")
 
+async def reconcile_scheduled_playlist_id(scheduled_playlist, original_playlist, db: DatabaseManager, nav_client: NavidromeClient) -> str:
+    """Re-link a scheduled playlist when Navidrome regenerated its ID.
+
+    Use an exact playlist-name match only when the stored ID is absent from
+    Navidrome. Ambiguous matches are refused to avoid updating the wrong list.
+    """
+    stored_id = scheduled_playlist.navidrome_playlist_id
+    playlist_name = original_playlist.get("playlist_name") if original_playlist else None
+    if not playlist_name:
+        return stored_id
+
+    remote_playlists = await nav_client.get_playlists()
+    if any(playlist.get("id") == stored_id for playlist in remote_playlists):
+        return stored_id
+
+    matches = [
+        playlist for playlist in remote_playlists
+        if playlist.get("name") == playlist_name
+    ]
+    if len(matches) != 1:
+        scheduler_logger.error(
+            f"Cannot reconcile playlist '{playlist_name}': stored ID is missing "
+            f"and found {len(matches)} exact name matches"
+        )
+        return stored_id
+
+    new_id = matches[0]["id"]
+    if not await db.relink_navidrome_playlist(stored_id, new_id):
+        raise RuntimeError(
+            f"Failed to relink local playlist '{playlist_name}' "
+            f"from {stored_id} to {new_id}"
+        )
+
+    scheduled_playlist.navidrome_playlist_id = new_id
+    scheduler_logger.warning(
+        f"Re-linked playlist '{playlist_name}' from stale Navidrome ID "
+        f"{stored_id} to {new_id}"
+    )
+    return new_id
+
+
 async def refresh_scheduled_playlists():
     """Check for and refresh scheduled playlists that are due"""
     try:
@@ -948,6 +989,8 @@ async def refresh_rediscover_playlist(scheduled_playlist, db: DatabaseManager):
         if not original_playlist:
             scheduler_logger.error(f"❌ Could not find original playlist data for {scheduled_playlist.navidrome_playlist_id}")
             return
+
+        await reconcile_scheduled_playlist_id(scheduled_playlist, original_playlist, db, nav_client)
         
         original_length = original_playlist.get("playlist_length", 20)
         scheduler_logger.info(f"🎯 Using original playlist length: {original_length}")
@@ -1022,6 +1065,14 @@ async def refresh_rediscover_v2_playlist(scheduled_playlist, db: DatabaseManager
         nav_client = get_navidrome_client()
         ai_client = get_ai_client()
 
+        playlists = await db.get_all_playlists_with_schedule_info()
+        original_playlist = next(
+            (p for p in playlists if p.get("navidrome_playlist_id") == scheduled_playlist.navidrome_playlist_id),
+            None
+        )
+        if original_playlist:
+            await reconcile_scheduled_playlist_id(scheduled_playlist, original_playlist, db, nav_client)
+
         library_ids = [scheduled_playlist.library_id] if hasattr(scheduled_playlist, 'library_id') and scheduled_playlist.library_id else None
 
         user_id = await db.get_or_create_user_id()
@@ -1095,6 +1146,8 @@ async def refresh_genre_mix_playlist(scheduled_playlist, db: DatabaseManager):
         if not original_playlist:
             scheduler_logger.error(f"❌ Could not find original playlist data for {scheduled_playlist.navidrome_playlist_id}")
             return
+
+        await reconcile_scheduled_playlist_id(scheduled_playlist, original_playlist, db, nav_client)
 
         genre = original_playlist.get("artist_id")
         if not genre:
@@ -1191,7 +1244,9 @@ async def refresh_this_is_playlist(scheduled_playlist, db: DatabaseManager):
         if not original_playlist:
             scheduler_logger.error(f"❌ Could not find original playlist data for {scheduled_playlist.navidrome_playlist_id}")
             return
-        
+
+        await reconcile_scheduled_playlist_id(scheduled_playlist, original_playlist, db, nav_client)
+
         artist_id = original_playlist["artist_id"]
         
         all_artists = await nav_client.get_artists()
