@@ -291,6 +291,7 @@ AI_API_KEY=your_service_api_key
 AI_MODEL=qwen3.8-q4
 AI_BASE_URL=http://192.168.0.177:8081/v1/chat/completions
 AI_TIMEOUT=300
+AI_DISABLE_REASONING=false
 ```
 
 ### Option 6: Groq (Free/Paid)

@@ -229,9 +229,11 @@ AI_API_KEY=your_service_api_key
 AI_MODEL=qwen3.8-q4
 AI_BASE_URL=http://192.168.0.177:8081/v1/chat/completions
 AI_TIMEOUT=300
+AI_DISABLE_REASONING=false
 ```
 
 The base URL must include `/v1/chat/completions`; the API key is sent as a Bearer token.
+When enabled, `AI_DISABLE_REASONING=true` sends `chat_template_kwargs.enable_thinking=false` per request; PX13 is not modified.
 
 Without AI configuration, playlists use fallback algorithms based on play counts.
 

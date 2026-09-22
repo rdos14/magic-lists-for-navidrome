@@ -81,6 +81,14 @@ class AIProvider:
             "max_tokens": max_tokens,
             "temperature": temperature
         }
+
+        # llama-server/llama.cpp supports disabling Qwen-style thinking for
+        # an individual request without changing the server configuration.
+        if (
+            self.provider_type == "openai_compatible"
+            and os.getenv("AI_DISABLE_REASONING", "false").lower() in {"1", "true", "yes", "on"}
+        ):
+            payload["chat_template_kwargs"] = {"enable_thinking": False}
         
         # Set timeout based on provider type
         if self.provider_type == "ollama":
