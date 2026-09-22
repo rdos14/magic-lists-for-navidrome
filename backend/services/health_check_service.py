@@ -326,12 +326,84 @@ class HealthCheckService:
             return await self._check_openrouter_provider()
         elif provider_type == "google":
             return await self._check_google_provider()
+        elif provider_type == "openai_compatible":
+            return await self._check_openai_compatible_provider()
         else:
             return {
                 "name": f"{provider_type.title()} AI Provider",
                 "status": "error",
                 "message": f"Unknown AI provider: {provider_type}",
-                "suggestion": "Check AI_PROVIDER in .env file. Valid options: openrouter, groq, google, ollama"
+                "suggestion": "Check AI_PROVIDER in .env file. Valid options: openrouter, groq, google, ollama, openai_compatible"
+            }
+
+    async def _check_openai_compatible_provider(self) -> Dict[str, str]:
+        """Check a generic OpenAI-compatible chat-completions service."""
+        api_key = os.getenv("AI_API_KEY")
+        model = os.getenv("AI_MODEL", "qwen3.8-q4")
+        base_url = os.getenv("AI_BASE_URL", "http://localhost:8081/v1/chat/completions")
+
+        if not api_key:
+            return {
+                "name": "OpenAI-Compatible AI Provider",
+                "status": "warning",
+                "message": "AI_API_KEY environment variable not set - AI features will use fallback algorithms",
+                "suggestion": "Set AI_API_KEY in your .env file to enable AI-powered playlist curation"
+            }
+
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                headers = {
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json"
+                }
+                payload = {
+                    "model": model,
+                    "messages": [{"role": "user", "content": "test"}],
+                    "max_tokens": 1
+                }
+                response = await client.post(base_url, json=payload, headers=headers)
+
+                if response.status_code == 200:
+                    return {
+                        "name": "OpenAI-Compatible AI Provider",
+                        "status": "success",
+                        "message": f"API reachable and model accepted (model: {model})",
+                        "suggestion": ""
+                    }
+                elif response.status_code == 401:
+                    return {
+                        "name": "OpenAI-Compatible AI Provider",
+                        "status": "error",
+                        "message": "Invalid API key - check AI_API_KEY in .env file",
+                        "suggestion": "Verify the key configured by the llama-server service"
+                    }
+                else:
+                    return {
+                        "name": "OpenAI-Compatible AI Provider",
+                        "status": "warning",
+                        "message": f"Service responded with status {response.status_code}",
+                        "suggestion": f"Check AI_BASE_URL and AI_MODEL ({model})"
+                    }
+        except httpx.ConnectError:
+            return {
+                "name": "OpenAI-Compatible AI Provider",
+                "status": "error",
+                "message": f"Could not connect to the configured service at {base_url}",
+                "suggestion": "Check that llama-server is running and reachable from the MagicLists container"
+            }
+        except httpx.TimeoutException:
+            return {
+                "name": "OpenAI-Compatible AI Provider",
+                "status": "warning",
+                "message": "Connectivity test timed out",
+                "suggestion": "The model may be loading or the configured endpoint may be unreachable"
+            }
+        except Exception as e:
+            return {
+                "name": "OpenAI-Compatible AI Provider",
+                "status": "error",
+                "message": f"Error connecting to OpenAI-compatible service: {str(e)}",
+                "suggestion": "Check AI_BASE_URL, AI_MODEL, and the service logs"
             }
     
     async def _check_openrouter_provider(self) -> Dict[str, str]:

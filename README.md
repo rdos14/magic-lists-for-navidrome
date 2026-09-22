@@ -53,9 +53,10 @@ _Caption: Creating a 'This is (Artist)' playlist_
          - NAVIDROME_USERNAME=your_username
          - NAVIDROME_PASSWORD=your_password
          - DATABASE_PATH=/app/data/magiclists.db # Required: Database location
-           - AI_PROVIDER=openrouter               # Optional: openrouter, groq, google, ollama
-           - AI_API_KEY=your_openrouter_api_key  # Optional, for OpenRouter/Groq/Google
+           - AI_PROVIDER=openrouter               # Optional: openrouter, groq, google, ollama, openai_compatible
+           - AI_API_KEY=your_openrouter_api_key  # Optional, for keyed providers
            - AI_MODEL=meta-llama/llama-3.3-70b-instruct # Optional, for AI providers
+           - AI_BASE_URL=                         # Required for openai_compatible
        volumes:
          - ./magiclists-data:/app/data          # Persist configuration
        restart: unless-stopped
@@ -145,9 +146,10 @@ Use this method if you prefer to run Python directly or want to contribute to de
    NAVIDROME_USERNAME=your_username
    NAVIDROME_PASSWORD=your_password
     DATABASE_PATH=./magiclists.db        # Required: Database location
-    AI_PROVIDER=openrouter              # Optional: openrouter, groq, google, ollama
-    AI_API_KEY=your_openrouter_api_key  # Optional, for OpenRouter/Groq/Google
+    AI_PROVIDER=openrouter              # Optional: openrouter, groq, google, ollama, openai_compatible
+    AI_API_KEY=your_openrouter_api_key  # Optional, for keyed providers
     AI_MODEL=meta-llama/llama-3.3-70b-instruct # Optional, for AI providers
+    AI_BASE_URL=                         # Required for openai_compatible
 ```
 5. Run the application:
 ```bash
@@ -208,7 +210,7 @@ MagicLists automatically validates your configuration on startup. If any issues 
 - **Navidrome URL**: Verifies your server is reachable  
 - **Navidrome Authentication**: Tests your credentials
 - **Navidrome Artists API**: Confirms API access is working
-- **AI Provider**: Checks if AI features are configured (OpenRouter, Groq, Google AI, or Ollama)
+- **AI Provider**: Checks if AI features are configured (OpenRouter, Groq, Google AI, Ollama, or an OpenAI-compatible service)
 - **Library Configuration**: Shows multiple library setup status
 
 If checks fail, detailed suggestions are provided to help resolve issues. You can also access the system check at any time via `/system-check`.
@@ -239,6 +241,7 @@ MagicLists supports multiple AI providers for enhanced playlist curation:
 3. **OpenRouter** (Free/Paid) - Access to various cloud models including free options
 4. **Google AI** (Free) - Google's Gemini models with generous free quota
 5. **Groq** (Free/Paid) - Fast cloud models with no credit card required
+6. **OpenAI-compatible server** - Use llama-server, vLLM, or another compatible local service
 
 ### Option 2: Local LLM (Ollama)
 [Install Ollama](https://ollama.com) and run models locally:
@@ -278,7 +281,19 @@ AI_MODEL=gemini-2.5-flash               # Fast and capable
 # AI_MODEL=gemini-1.5-pro               # More advanced model
 ```
 
-### Option 5: Groq (Free/Paid)
+### Option 5: OpenAI-Compatible Server
+
+For a local `llama-server` or another service exposing OpenAI Chat Completions:
+
+```bash
+AI_PROVIDER=openai_compatible
+AI_API_KEY=your_service_api_key
+AI_MODEL=qwen3.8-q4
+AI_BASE_URL=http://192.168.0.177:8081/v1/chat/completions
+AI_TIMEOUT=300
+```
+
+### Option 6: Groq (Free/Paid)
 Get a free API key from [Groq](https://console.groq.com/) - no credit card required:
 
 ```bash

@@ -25,12 +25,16 @@ DATABASE_PATH=./magiclists.db        # For standalone: ./magiclists.db
                                      # For Docker: /app/data/magiclists.db
 
 # Optional - AI curation (without this, uses fallback algorithm)
-AI_PROVIDER=openrouter              # Options: openrouter, groq, google, ollama
-AI_API_KEY=sk-or-v1-your-key-here   # For OpenRouter/Groq/Google (not needed for Ollama)
+AI_PROVIDER=openrouter              # Options: openrouter, groq, google, ollama, openai_compatible
+AI_API_KEY=sk-or-v1-your-key-here   # For keyed providers; not needed for Ollama
 AI_MODEL=meta-llama/llama-3.3-70b-instruct     # Optional, uses provider defaults
+AI_BASE_URL=                         # Required for openai_compatible
 
 # Optional - Ollama timeout (only for ollama provider)
 OLLAMA_TIMEOUT=180                   # Seconds, increase for slower CPUs
+
+# Optional - OpenAI-compatible server timeout
+AI_TIMEOUT=300                       # Seconds, for local model inference
 ```
 
 ### 3. For Docker Deployment
@@ -116,6 +120,7 @@ If you get 500 server errors when creating playlists (even though system checks 
 - For Groq: Check your API key from https://console.groq.com/
 - For OpenRouter: Check your API key has sufficient credits
 - For Ollama: Ensure Ollama server is running (`ollama serve`)
+- For OpenAI-compatible: Ensure `AI_BASE_URL` points to `/v1/chat/completions` and the service accepts Bearer authentication
 - Application will fall back to play-count based selection
 
 ### Docker Issues
@@ -213,6 +218,20 @@ For AI-powered playlist curation, choose from these providers:
    OLLAMA_BASE_URL=http://localhost:11434/v1/chat/completions
    # OLLAMA_TIMEOUT=300  # Increase for slower CPUs (default: 180 seconds)
    ```
+
+#### Option 5: OpenAI-Compatible Server (llama-server, vLLM, etc.)
+
+Configure any service that exposes the OpenAI Chat Completions API:
+
+```bash
+AI_PROVIDER=openai_compatible
+AI_API_KEY=your_service_api_key
+AI_MODEL=qwen3.8-q4
+AI_BASE_URL=http://192.168.0.177:8081/v1/chat/completions
+AI_TIMEOUT=300
+```
+
+The base URL must include `/v1/chat/completions`; the API key is sent as a Bearer token.
 
 Without AI configuration, playlists use fallback algorithms based on play counts.
 

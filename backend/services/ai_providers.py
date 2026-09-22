@@ -40,11 +40,17 @@ class AIProviderConfig:
             requires_key=False,
             default_model="llama3.2",
             signup_url=""  # Not applicable for local models
+        ),
+        "openai_compatible": ProviderConfig(
+            base_url="http://localhost:8081/v1/chat/completions",
+            requires_key=True,
+            default_model="qwen3.8-q4",
+            signup_url=""  # The API key is managed by the local service
         )
     }
 
 class AIProvider:
-    """AI provider abstraction for OpenRouter, Groq, and Ollama"""
+    """AI provider abstraction for the supported AI backends"""
     
     def __init__(self, provider_type: str, api_key: Optional[str], model: str, base_url: str):
         self.provider_type = provider_type
@@ -62,7 +68,7 @@ class AIProvider:
         
         # Build headers - only include Authorization for providers that require keys
         headers = {"Content-Type": "application/json"}
-        if self.provider_type in ["openrouter", "groq"] and self.api_key:
+        if self.provider_type in ["openrouter", "groq", "openai_compatible"] and self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         
         # Build payload - all providers use OpenAI-compatible format
@@ -129,8 +135,9 @@ class AIProvider:
                         await asyncio.sleep(retry_delay)
                         continue
         else:
-            # OpenRouter and Groq - single attempt with standard timeout
-            timeout = 30.0
+            # Cloud providers use a short timeout; local OpenAI-compatible
+            # servers may need longer for model inference.
+            timeout = float(os.getenv("AI_TIMEOUT", "300")) if self.provider_type == "openai_compatible" else 30.0
             response = await self.client.post(
                 self.base_url,
                 json=payload,
@@ -286,9 +293,12 @@ def get_ai_provider() -> AIProvider:
     # Get model (user override or provider default)
     model = os.getenv("AI_MODEL") or provider_config.default_model
     
-    # Get base URL (allow Ollama override, use default for others)
+    # Get base URL (Ollama keeps its legacy setting; generic OpenAI-compatible
+    # services use AI_BASE_URL so the endpoint can be configured at runtime.)
     if provider_type == "ollama":
         base_url = os.getenv("OLLAMA_BASE_URL", provider_config.base_url)
+    elif provider_type == "openai_compatible":
+        base_url = os.getenv("AI_BASE_URL", provider_config.base_url)
     else:
         base_url = provider_config.base_url
     
