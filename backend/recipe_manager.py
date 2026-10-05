@@ -133,16 +133,25 @@ class RecipeManager:
                 replacements["{{TARGET_GENRE}}"] = str(inputs["genre"])
             if "num_tracks" in inputs:
                 replacements["{{DESIRED_TRACK_COUNT}}"] = str(inputs["num_tracks"])
-            
-            print(f"🔄 Processing recipe with {len(replacements)} placeholder replacements")
-            
+
             # Map re-discover specific inputs
             if "candidate_tracks_json" in inputs:
                 replacements["{{CANDIDATE_TRACKS_JSON}}"] = str(inputs["candidate_tracks_json"])
             if "analysis_summary" in inputs:
                 replacements["{{ANALYSIS_SUMMARY}}"] = str(inputs["analysis_summary"])
-            
-            
+
+            # New-style recipes also use placeholders named after input keys,
+            # e.g. {{tracks_found}} in Re-Discover Phase 1.
+            for key, value in inputs.items():
+                placeholder = "{{" + key + "}}"
+                if isinstance(value, (dict, list)):
+                    replacement = json.dumps(value, ensure_ascii=False)
+                else:
+                    replacement = str(value)
+                replacements.setdefault(placeholder, replacement)
+
+            print(f"🔄 Processing recipe with {len(replacements)} placeholder replacements")
+
             # Pass 1: Evaluate math expressions first
             math_evaluated_recipe = self._evaluate_math_expressions(recipe, inputs)
             
