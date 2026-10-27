@@ -1088,6 +1088,138 @@ async function loadPlaylists() {
     }
 }
 
+let refreshAllPlaylistsRunning = false;
+
+function escapeToastText(value) {
+    return String(value).replace(/[&<>"']/g, character => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+    })[character]);
+}
+
+async function refreshAllPlaylists() {
+    if (refreshAllPlaylistsRunning) return;
+
+    const button = document.getElementById('refresh-all-playlists-btn');
+    if (button?.disabled) return;
+
+    refreshAllPlaylistsRunning = true;
+    const originalButtonHtml = button ? button.innerHTML : '';
+    if (button) {
+        button.disabled = true;
+        button.innerHTML = `
+            <svg class="animate-spin size-4 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            Refreshing playlists...
+        `;
+    }
+
+    let refreshedCount = 0;
+    const failures = [];
+
+    try {
+        const listResponse = await fetch('/api/playlists');
+        if (!listResponse.ok) throw new Error('Failed to load playlists');
+
+        const allPlaylists = await listResponse.json();
+        const seenIds = new Set();
+        const playlists = allPlaylists.filter(playlist => {
+            const id = playlist.navidrome_playlist_id;
+            const frequency = String(playlist.refresh_frequency || '').toLowerCase();
+            if (!id || !frequency || ['none', 'never', 'manual', 'manually'].includes(frequency) || seenIds.has(id)) {
+                return false;
+            }
+            seenIds.add(id);
+            return true;
+        });
+        const skippedCount = allPlaylists.length - playlists.length;
+
+        if (playlists.length === 0) {
+            showToast('success', 'There are no scheduled playlists to refresh.');
+            return;
+        }
+
+        for (let index = 0; index < playlists.length; index += 1) {
+            const playlist = playlists[index];
+            const playlistName = escapeToastText(playlist.playlist_name || 'Unnamed playlist');
+            const progress = `${index + 1}/${playlists.length}`;
+
+            showToast('loading', `Refreshing playlist ${progress}: ${playlistName}`, 0);
+
+            try {
+                const refreshResponse = await fetch(
+                    `/api/playlists/${encodeURIComponent(playlist.navidrome_playlist_id)}/refresh`,
+                    { method: 'POST' }
+                );
+                const refreshData = await refreshResponse.json().catch(() => ({}));
+                if (!refreshResponse.ok) {
+                    throw new Error(refreshData.detail || refreshData.message || `HTTP ${refreshResponse.status}`);
+                }
+
+                // The refresh endpoint can return HTTP 200 even when its handler
+                // did not update the playlist, so verify persisted state.
+                const verifyResponse = await fetch('/api/playlists');
+                if (!verifyResponse.ok) throw new Error('Could not verify the refreshed playlist');
+                const updatedPlaylists = await verifyResponse.json();
+                const updated = updatedPlaylists.find(item =>
+                    item.navidrome_playlist_id === playlist.navidrome_playlist_id
+                );
+                if (!updated) throw new Error('Playlist was not found after refresh');
+                if (!updated.last_refreshed || updated.last_refreshed === playlist.last_refreshed) {
+                    throw new Error('No refresh was recorded');
+                }
+                if (!Number(updated.track_count)) throw new Error('Refresh produced no tracks');
+
+                const reasoning = String(updated.reasoning || '');
+                const fallbackPattern = /^(fallback curation|fallback strategy|fallback:|basic fallback|algorithmic selection)\b|network error|ai unavailability/i;
+                if (fallbackPattern.test(reasoning)) {
+                    throw new Error('Refresh completed using fallback instead of AI curation');
+                }
+
+                refreshedCount += 1;
+                showToast('success', `Refreshed playlist ${progress}: ${playlistName}`, 1500);
+            } catch (error) {
+                const detail = escapeToastText(error.message || 'Unknown error');
+                failures.push(`${playlistName}: ${detail}`);
+                showToast('error', `Playlist ${progress} failed: ${playlistName}. Continuing to the next playlist.`, 2500);
+            }
+
+            // Leave each per-playlist notification visible before advancing.
+            await new Promise(resolve => setTimeout(resolve, 1200));
+        }
+
+        await loadPlaylists();
+        await updatePlaylistCount();
+
+        if (failures.length > 0) {
+            const visibleFailures = failures.slice(0, 3).join('; ');
+            const remainingFailures = failures.length > 3 ? `; and ${failures.length - 3} more` : '';
+            const skippedMessage = skippedCount ? ` ${skippedCount} unscheduled playlist(s) skipped.` : '';
+            showToast(
+                'error',
+                `Refresh finished: ${refreshedCount}/${playlists.length} refreshed; ${failures.length} failed. ${visibleFailures}${remainingFailures}.${skippedMessage}`,
+                15000
+            );
+        } else {
+            const skippedMessage = skippedCount ? ` ${skippedCount} unscheduled playlist(s) skipped.` : '';
+            showToast('success', `All ${refreshedCount} scheduled playlists refreshed.${skippedMessage}`, 8000);
+        }
+    } catch (error) {
+        showToast('error', `Could not refresh playlists: ${escapeToastText(error.message || 'Unknown error')}`, 10000);
+    } finally {
+        refreshAllPlaylistsRunning = false;
+        if (button) {
+            button.disabled = false;
+            button.innerHTML = originalButtonHtml;
+        }
+    }
+}
+
 function truncateText(text, maxLength) {
     if (!text) return '';
     return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;

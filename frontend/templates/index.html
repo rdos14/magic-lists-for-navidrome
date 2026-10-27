@@ -629,9 +629,22 @@
 
                   <!-- Manage Playlists Content (hidden by default) -->
                   <div id="manage-playlists-content" style="display: none;" class="p-4 pb-6 md:p-8 md:pb-10 bg-white md:border md:border-gray-200 md:rounded-lg">
-                      <div class="mb-6">
-                          <h1 class="text-2xl font-bold text-gray-900 mb-3">Manage Playlists</h1>
-                          <p class="text-gray-600">View and manage all playlists you've created. These are synced with your Navidrome library.</p>
+                      <div class="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                          <div>
+                              <h1 class="text-2xl font-bold text-gray-900 mb-3">Manage Playlists</h1>
+                              <p class="text-gray-600">View and manage all playlists you've created. These are synced with your Navidrome library.</p>
+                          </div>
+                          <button
+                              type="button"
+                              id="refresh-all-playlists-btn"
+                              onclick="refreshAllPlaylists()"
+                              class="inline-flex w-full md:w-auto items-center justify-center rounded-lg bg-gray-900 px-4 py-2 font-bold text-white transition-colors hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                              <svg class="size-4 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                              </svg>
+                              Refresh All Playlists
+                          </button>
                       </div>
 
                       <!-- Loading State -->
