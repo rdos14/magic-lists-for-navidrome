@@ -52,19 +52,142 @@ class AIProviderConfig:
 class AIProvider:
     """AI provider abstraction for the supported AI backends"""
     
-    def __init__(self, provider_type: str, api_key: Optional[str], model: str, base_url: str):
+    def __init__(
+        self,
+        provider_type: str,
+        api_key: Optional[str],
+        model: str,
+        base_url: str,
+        fallback_provider: Optional["AIProvider"] = None,
+    ):
         self.provider_type = provider_type
         self.api_key = api_key
         self.model = model
         self.base_url = base_url
+        self.fallback_provider = fallback_provider
+        self.last_used_fallback = False
+        self.healthcheck_timeout = float(os.getenv("AI_HEALTHCHECK_TIMEOUT", "3"))
         self.client = httpx.AsyncClient()
-    
-    async def generate(self, system_prompt: str, user_prompt: str, max_tokens: int = 16000, temperature: float = 0.7) -> str:
-        """Send chat completion request to configured AI provider"""
+
+    def _models_url(self) -> str:
+        """Derive the OpenAI-compatible model-catalog URL from the chat URL."""
+        from urllib.parse import urlsplit, urlunsplit
+
+        parts = urlsplit(self.base_url)
+        path = parts.path.rstrip("/")
+        if path.endswith("/chat/completions"):
+            path = path[: -len("/chat/completions")] + "/models"
+        elif path.endswith("/v1"):
+            path += "/models"
+        else:
+            path += "/models"
+        return urlunsplit((parts.scheme, parts.netloc, path, parts.query, ""))
+
+    def _headers(self) -> Dict[str, str]:
+        headers = {"Content-Type": "application/json"}
+        if self.provider_type in {"openrouter", "groq", "openai_compatible"} and self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return headers
+
+    async def _primary_available(self) -> bool:
+        """Bounded probe: catalog reachability/auth before a potentially long inference."""
+        try:
+            response = await self.client.get(
+                self._models_url(),
+                headers=self._headers(),
+                timeout=self.healthcheck_timeout,
+            )
+            return 200 <= response.status_code < 300
+        except httpx.RequestError as error:
+            print(f"⚠️ AI primary health check failed ({error.__class__.__name__})")
+            return False
+
+    @staticmethod
+    def _is_missing_model_error(error: httpx.HTTPStatusError) -> bool:
+        """Recognize model-routing failures without masking ordinary bad requests."""
+        if error.response.status_code != 400:
+            return False
+        try:
+            details = error.response.json().get("error", "")
+        except (ValueError, AttributeError):
+            return False
+        if isinstance(details, dict):
+            message = str(details.get("message", ""))
+        else:
+            message = str(details)
+        message = message.lower()
+        return "model" in message and any(
+            phrase in message
+            for phrase in ("not found", "not available", "unavailable", "unknown", "not loaded", "does not exist")
+        )
+
+    async def _use_fallback(self, system_prompt: str, user_prompt: str, max_tokens: int,
+                            temperature: float, reason: str,
+                            request_timeout: Optional[float] = None) -> str:
+        fallback = self.fallback_provider
+        if fallback is None:
+            raise RuntimeError("AI fallback provider is not configured")
+        self.last_used_fallback = True
+        print(
+            f"⚠️ Primary AI unavailable ({reason}); using fallback model "
+            f"{fallback.model} at {fallback.base_url}"
+        )
+        return await fallback._generate(
+            system_prompt, user_prompt, max_tokens, temperature, request_timeout
+        )
+
+    async def generate(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        max_tokens: int = 16000,
+        temperature: float = 0.7,
+        request_timeout: Optional[float] = None,
+    ) -> str:
+        """Use the fallback only when the configured primary is unavailable."""
+        self.last_used_fallback = False
+        if self.fallback_provider is not None and not await self._primary_available():
+            return await self._use_fallback(
+                system_prompt, user_prompt, max_tokens, temperature,
+                "health check failed", request_timeout,
+            )
+        try:
+            return await self._generate(
+                system_prompt, user_prompt, max_tokens, temperature, request_timeout
+            )
+        except httpx.RequestError as error:
+            if self.fallback_provider is None:
+                raise
+            return await self._use_fallback(
+                system_prompt, user_prompt, max_tokens, temperature,
+                error.__class__.__name__, request_timeout,
+            )
+        except httpx.HTTPStatusError as error:
+            status = error.response.status_code
+            if self.fallback_provider is None or not (
+                status in {404, 408, 425, 429} or status >= 500 or self._is_missing_model_error(error)
+            ):
+                raise
+            return await self._use_fallback(
+                system_prompt, user_prompt, max_tokens, temperature,
+                f"HTTP {status}", request_timeout,
+            )
+
+    async def _generate(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        max_tokens: int = 16000,
+        temperature: float = 0.7,
+        request_timeout: Optional[float] = None,
+    ) -> str:
+        """Send chat completion request to this provider."""
         
         # Handle Google AI's different API format
         if self.provider_type == "google":
-            return await self._generate_google(system_prompt, user_prompt, max_tokens, temperature)
+            return await self._generate_google(
+                system_prompt, user_prompt, max_tokens, temperature, request_timeout
+            )
         
         # Build headers - only include Authorization for providers that require keys
         headers = {"Content-Type": "application/json"}
@@ -94,6 +217,8 @@ class AIProvider:
         if self.provider_type == "ollama":
             # Allow user to override Ollama timeout (default 180 seconds)
             timeout = float(os.getenv("OLLAMA_TIMEOUT", "180"))
+            if request_timeout is not None:
+                timeout = min(timeout, request_timeout)
             max_retries = 3
             retry_delay = 10
             
@@ -142,10 +267,13 @@ class AIProvider:
                         import asyncio
                         await asyncio.sleep(retry_delay)
                         continue
+            raise RuntimeError("Ollama retry loop exhausted without a response")
         else:
             # Cloud providers use a short timeout; local OpenAI-compatible
             # servers may need longer for model inference.
             timeout = float(os.getenv("AI_TIMEOUT", "300")) if self.provider_type == "openai_compatible" else 30.0
+            if request_timeout is not None:
+                timeout = min(timeout, request_timeout)
             response = await self.client.post(
                 self.base_url,
                 json=payload,
@@ -157,7 +285,14 @@ class AIProvider:
             result = response.json()
             return result["choices"][0]["message"]["content"].strip()
     
-    async def _generate_google(self, system_prompt: str, user_prompt: str, max_tokens: int = 16000, temperature: float = 0.7) -> Union[str, NoReturn]:  # type: ignore
+    async def _generate_google(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        max_tokens: int = 16000,
+        temperature: float = 0.7,
+        request_timeout: Optional[float] = None,
+    ) -> Union[str, NoReturn]:  # type: ignore
         """Handle Google AI's specific API format with controlled generation for JSON"""
         url = f"{self.base_url}/models/{self.model}:generateContent?key={self.api_key}"
 
@@ -214,7 +349,7 @@ class AIProvider:
                 url,
                 json=payload,
                 headers=headers,
-                timeout=60.0
+                timeout=min(60.0, request_timeout) if request_timeout is not None else 60.0,
             )
             response.raise_for_status()
 
@@ -277,10 +412,12 @@ class AIProvider:
             raise Exception(f"Google AI error: {e.__class__.__name__}: {e}") from e
 
     async def close(self):
-        """Close the HTTP client"""
+        """Close this provider's client and any configured fallback client."""
         if hasattr(self, 'client') and self.client:
             if hasattr(self.client, 'is_closed') and not self.client.is_closed:
                 await self.client.aclose()
+        if self.fallback_provider is not None:
+            await self.fallback_provider.close()
 
 def get_ai_provider() -> AIProvider:
     """Factory function that reads .env and returns configured provider"""
@@ -310,9 +447,34 @@ def get_ai_provider() -> AIProvider:
     else:
         base_url = provider_config.base_url
     
+    fallback_provider = None
+    fallback_env = {
+        "AI_FALLBACK_MODEL": os.getenv("AI_FALLBACK_MODEL"),
+        "AI_FALLBACK_BASE_URL": os.getenv("AI_FALLBACK_BASE_URL"),
+        "AI_FALLBACK_API_KEY": os.getenv("AI_FALLBACK_API_KEY"),
+    }
+    if any(fallback_env.values()):
+        missing = [name for name, value in fallback_env.items() if not value]
+        if provider_type != "openai_compatible":
+            raise ValueError("AI failover is supported only for openai_compatible primary providers")
+        if missing:
+            raise ValueError(f"Incomplete AI fallback configuration; missing: {', '.join(missing)}")
+        fallback_model = fallback_env["AI_FALLBACK_MODEL"]
+        fallback_base_url = fallback_env["AI_FALLBACK_BASE_URL"]
+        fallback_api_key = fallback_env["AI_FALLBACK_API_KEY"]
+        if fallback_model is None or fallback_base_url is None or fallback_api_key is None:
+            raise ValueError("AI fallback configuration values must not be empty")
+        fallback_provider = AIProvider(
+            provider_type="openai_compatible",
+            api_key=fallback_api_key,
+            model=fallback_model,
+            base_url=fallback_base_url,
+        )
+
     return AIProvider(
         provider_type=provider_type,
         api_key=api_key,
         model=model,
-        base_url=base_url
+        base_url=base_url,
+        fallback_provider=fallback_provider,
     )

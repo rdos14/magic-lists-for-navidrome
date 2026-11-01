@@ -337,74 +337,54 @@ class HealthCheckService:
             }
 
     async def _check_openai_compatible_provider(self) -> Dict[str, str]:
-        """Check a generic OpenAI-compatible chat-completions service."""
-        api_key = os.getenv("AI_API_KEY")
-        model = os.getenv("AI_MODEL", "qwen3.8-q4")
-        base_url = os.getenv("AI_BASE_URL", "http://localhost:8081/v1/chat/completions")
+        """Exercise the configured route, including its fallback when necessary."""
+        from .ai_providers import get_ai_provider
 
-        if not api_key:
-            return {
-                "name": "OpenAI-Compatible AI Provider",
-                "status": "warning",
-                "message": "AI_API_KEY environment variable not set - AI features will use fallback algorithms",
-                "suggestion": "Set AI_API_KEY in your .env file to enable AI-powered playlist curation"
-            }
-
+        provider = None
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                headers = {
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json"
-                }
-                payload = {
-                    "model": model,
-                    "messages": [{"role": "user", "content": "test"}],
-                    "max_tokens": 1
-                }
-                response = await client.post(base_url, json=payload, headers=headers)
+            provider = get_ai_provider()
+            content = await provider.generate(
+                "Reply briefly to system checks.",
+                "Reply with exactly OK.",
+                max_tokens=16,
+                temperature=0,
+                request_timeout=15.0,
+            )
+            if not content.strip():
+                raise RuntimeError("AI provider returned empty content")
 
-                if response.status_code == 200:
-                    return {
-                        "name": "OpenAI-Compatible AI Provider",
-                        "status": "success",
-                        "message": f"API reachable and model accepted (model: {model})",
-                        "suggestion": ""
-                    }
-                elif response.status_code == 401:
-                    return {
-                        "name": "OpenAI-Compatible AI Provider",
-                        "status": "error",
-                        "message": "Invalid API key - check AI_API_KEY in .env file",
-                        "suggestion": "Verify the key configured by the llama-server service"
-                    }
-                else:
-                    return {
-                        "name": "OpenAI-Compatible AI Provider",
-                        "status": "warning",
-                        "message": f"Service responded with status {response.status_code}",
-                        "suggestion": f"Check AI_BASE_URL and AI_MODEL ({model})"
-                    }
-        except httpx.ConnectError:
+            if provider.last_used_fallback:
+                fallback = provider.fallback_provider
+                if fallback is None:
+                    raise RuntimeError("Fallback was reported active but is not configured")
+                return {
+                    "name": "OpenAI-Compatible AI Provider (Fallback)",
+                    "status": "success",
+                    "message": (
+                        f"Primary model unavailable; fallback generated a response "
+                        f"(model: {fallback.model})"
+                    ),
+                    "suggestion": "",
+                }
+            return {
+                "name": "OpenAI-Compatible AI Provider",
+                "status": "success",
+                "message": f"API reachable and model generated a response (model: {provider.model})",
+                "suggestion": "",
+            }
+        except Exception as error:
             return {
                 "name": "OpenAI-Compatible AI Provider",
                 "status": "error",
-                "message": f"Could not connect to the configured service at {base_url}",
-                "suggestion": "Check that llama-server is running and reachable from the MagicLists container"
+                "message": f"AI generation check failed ({error.__class__.__name__})",
+                "suggestion": "Check the configured model endpoint and its root-only API key file",
             }
-        except httpx.TimeoutException:
-            return {
-                "name": "OpenAI-Compatible AI Provider",
-                "status": "warning",
-                "message": "Connectivity test timed out",
-                "suggestion": "The model may be loading or the configured endpoint may be unreachable"
-            }
-        except Exception as e:
-            return {
-                "name": "OpenAI-Compatible AI Provider",
-                "status": "error",
-                "message": f"Error connecting to OpenAI-compatible service: {str(e)}",
-                "suggestion": "Check AI_BASE_URL, AI_MODEL, and the service logs"
-            }
+        finally:
+            if provider is not None:
+                try:
+                    await provider.close()
+                except Exception as close_error:
+                    print(f"AI provider client cleanup failed ({close_error.__class__.__name__})")
     
     async def _check_openrouter_provider(self) -> Dict[str, str]:
         """Check OpenRouter API key and connectivity"""
