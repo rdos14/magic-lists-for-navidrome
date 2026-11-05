@@ -1006,7 +1006,9 @@ async def refresh_rediscover_playlist(scheduled_playlist, db: DatabaseManager):
 
         scheduler_logger.info(f"🔄 Re-Discover v2.0 refresh context - Previous tracks: {len(previous_songs)}, Library IDs: {library_ids}")
 
-        result = await processor.generate_playlist(user_id, server_id, library_ids)
+        result = await processor.generate_playlist(
+            user_id, server_id, library_ids, track_count=original_length
+        )
         tracks = result.get("tracks", [])
         
         if tracks:
@@ -1019,10 +1021,11 @@ async def refresh_rediscover_playlist(scheduled_playlist, db: DatabaseManager):
             
             # Read reasoning at result level first, fall back to per-track
             ai_reasoning = result.get("reasoning", "")
-            ai_curated = result.get("ai_curated", False)
+            ai_curated = result.get("ai_curated", False) or any(
+                t.get("ai_curated", False) for t in tracks
+            )
             if not ai_reasoning:
                 ai_reasoning = next((t.get("ai_reasoning", "") for t in tracks if t.get("ai_reasoning")), "")
-                ai_curated = any(t.get("ai_curated", False) for t in tracks)
             
             if ai_reasoning and ai_curated:
                 reasoning_preview = ai_reasoning[:200] + "..." if len(ai_reasoning) > 200 else ai_reasoning
@@ -1073,13 +1076,16 @@ async def refresh_rediscover_v2_playlist(scheduled_playlist, db: DatabaseManager
         if original_playlist:
             await reconcile_scheduled_playlist_id(scheduled_playlist, original_playlist, db, nav_client)
 
+        playlist_length = original_playlist.get("playlist_length", 25) if original_playlist else 25
         library_ids = [scheduled_playlist.library_id] if hasattr(scheduled_playlist, 'library_id') and scheduled_playlist.library_id else None
 
         user_id = await db.get_or_create_user_id()
         server_id = nav_client.base_url or "unknown_server"
 
         processor = ReDiscoverV2Processor(nav_client, ai_client, db)
-        result = await processor.generate_playlist(user_id, server_id, library_ids)
+        result = await processor.generate_playlist(
+            user_id, server_id, library_ids, track_count=playlist_length
+        )
         tracks = result.get("tracks", [])
 
         if not tracks:
@@ -1090,13 +1096,14 @@ async def refresh_rediscover_v2_playlist(scheduled_playlist, db: DatabaseManager
 
         # Read reasoning at result level first, fall back to per-track
         ai_reasoning = result.get("reasoning", "")
-        ai_curated = result.get("ai_curated", False)
+        ai_curated = result.get("ai_curated", False) or any(
+            track.get("ai_curated", False) for track in tracks
+        )
         if not ai_reasoning:
             ai_reasoning = next(
                 (t.get("ai_reasoning", "") for t in tracks if t.get("ai_reasoning")),
                 ""
             )
-            ai_curated = any(t.get("ai_curated", False) for t in tracks)
 
         if ai_reasoning and ai_curated:
             reasoning_preview = ai_reasoning[:200] + "..." if len(ai_reasoning) > 200 else ai_reasoning
