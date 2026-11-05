@@ -1,10 +1,11 @@
 import os
+import traceback
 import unittest
 from unittest.mock import patch
 
 import httpx
 
-from backend.services.ai_providers import get_ai_provider
+from backend.services.ai_providers import AIProvider, get_ai_provider
 
 
 class AIProviderFailoverTests(unittest.IsolatedAsyncioTestCase):
@@ -113,6 +114,33 @@ class AIProviderFailoverTests(unittest.IsolatedAsyncioTestCase):
             await fallback.close()
         self.assertEqual(result, "fallback for missing model")
         self.assertTrue(primary.last_used_fallback)
+
+    async def test_google_http_error_does_not_expose_api_key(self):
+        api_key = "google-test-sentinel-key"
+        provider = AIProvider(
+            provider_type="google",
+            api_key=api_key,
+            model="gemini-test",
+            base_url="https://google.test/v1beta",
+        )
+        provider.client = httpx.AsyncClient(transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                429, json={"error": "rate limited"}, request=request
+            )
+        ))
+        try:
+            with self.assertRaises(Exception) as raised:
+                await provider.generate("system", "user")
+        finally:
+            await provider.close()
+
+        error_text = str(raised.exception) + "".join(
+            traceback.format_exception(
+                type(raised.exception), raised.exception, raised.exception.__traceback__
+            )
+        )
+        self.assertNotIn(api_key, error_text)
+        self.assertIn("429", error_text)
 
     async def test_partial_fallback_configuration_is_rejected(self):
         os.environ.pop("AI_FALLBACK_API_KEY")

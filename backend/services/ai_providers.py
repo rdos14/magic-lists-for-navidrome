@@ -77,8 +77,6 @@ class AIProvider:
         path = parts.path.rstrip("/")
         if path.endswith("/chat/completions"):
             path = path[: -len("/chat/completions")] + "/models"
-        elif path.endswith("/v1"):
-            path += "/models"
         else:
             path += "/models"
         return urlunsplit((parts.scheme, parts.netloc, path, parts.query, ""))
@@ -189,10 +187,7 @@ class AIProvider:
                 system_prompt, user_prompt, max_tokens, temperature, request_timeout
             )
         
-        # Build headers - only include Authorization for providers that require keys
-        headers = {"Content-Type": "application/json"}
-        if self.provider_type in ["openrouter", "groq", "openai_compatible"] and self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
+        headers = self._headers()
         
         # Build payload - all providers use OpenAI-compatible format
         payload = {
@@ -307,12 +302,7 @@ class AIProvider:
         {user_prompt}
         """
 
-        # For genre mix, responses are small JSON, so cap output tokens reasonably
-        if "Genre Mix" in system_prompt or "genre_mix" in user_prompt.lower():
-            # max_output = 2500  # Genre mix responses are ~500 tokens
-            max_output = min(int(max_tokens), 16000)
-        else:
-            max_output = min(int(max_tokens), 16000)
+        max_output = min(int(max_tokens), 16000)
 
         generation_config = {
             "temperature": temperature,
@@ -329,20 +319,6 @@ class AIProvider:
         }
 
         headers = {"Content-Type": "application/json"}
-
-        # FIX: Debug payload write is wrapped in try/except so a missing
-        # directory never crashes the actual AI call in production.
-        import time
-        timestamp = int(time.time())
-        try:
-            os.makedirs("payloads", exist_ok=True)
-            payload_file = f"payloads/google_ai_payload_{timestamp}.json"
-            with open(payload_file, 'w') as f:
-                json.dump(payload, f, indent=2)
-            print(f"📄 Saved payload to {payload_file} (prompt: ~{len(combined_prompt)//4} tokens)")
-        except Exception as debug_err:
-            # Debug tooling should never take down a production request
-            print(f"📄 Debug payload write skipped: {debug_err}")
 
         try:
             response = await self.client.post(
@@ -407,7 +383,9 @@ class AIProvider:
             raise Exception("Google AI response missing candidates array")
 
         except httpx.RequestError as e:
-            raise Exception(f"Google AI request error: {e.__class__.__name__}: {e}") from e
+            raise Exception(f"Google AI request error: {e.__class__.__name__}") from None
+        except httpx.HTTPStatusError as e:
+            raise Exception(f"Google AI HTTP error: {e.response.status_code}") from None
         except Exception as e:
             raise Exception(f"Google AI error: {e.__class__.__name__}: {e}") from e
 
