@@ -1,3 +1,4 @@
+import json
 import os
 import traceback
 import unittest
@@ -114,6 +115,44 @@ class AIProviderFailoverTests(unittest.IsolatedAsyncioTestCase):
             await fallback.close()
         self.assertEqual(result, "fallback for missing model")
         self.assertTrue(primary.last_used_fallback)
+
+    async def test_google_generation_preserves_request_contract(self):
+        api_key = "google-test-sentinel-key"
+        captured = {}
+
+        def transport(request):
+            captured["request"] = request
+            captured["payload"] = json.loads(request.content)
+            return httpx.Response(200, json={
+                "candidates": [{"content": {"parts": [{"text": '{"ok": true}'}]}}]
+            }, request=request)
+
+        provider = AIProvider(
+            provider_type="google",
+            api_key=api_key,
+            model="gemini-test",
+            base_url="https://google.test/v1beta",
+        )
+        provider.client = httpx.AsyncClient(transport=httpx.MockTransport(transport))
+        try:
+            result = await provider.generate(
+                "system marker", "user marker", max_tokens=20000, temperature=0.25
+            )
+        finally:
+            await provider.close()
+
+        request = captured["request"]
+        payload = captured["payload"]
+        self.assertEqual(request.url.path, "/v1beta/models/gemini-test:generateContent")
+        self.assertEqual(request.url.params["key"], api_key)
+        self.assertEqual(request.headers["content-type"], "application/json")
+        self.assertEqual(payload["generationConfig"], {
+            "temperature": 0.25, "maxOutputTokens": 16000
+        })
+        prompt = payload["contents"][0]["parts"][0]["text"]
+        self.assertIn("system marker", prompt)
+        self.assertIn("user marker", prompt)
+        self.assertEqual(json.loads(result), {"ok": True})
 
     async def test_google_http_error_does_not_expose_api_key(self):
         api_key = "google-test-sentinel-key"
