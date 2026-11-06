@@ -996,7 +996,6 @@ async def refresh_rediscover_playlist(scheduled_playlist, db: DatabaseManager):
         scheduler_logger.info(f"🎯 Using original playlist length: {original_length}")
         
         previous_songs = original_playlist.get("songs", [])[:10]
-        variety_instruction = f"REFRESH CHALLENGE: The current playlist opens with these tracks in this order: {', '.join(previous_songs[:5])}. Your goal is to create a FRESH arrangement that tells a different musical story. You may include some of the same excellent tracks if they're rediscovery-worthy, but avoid replicating the same opening sequence or overall flow. Think creatively about re-ordering, substituting, or finding better transitions to ensure a genuinely refreshed listening experience." if previous_songs else ""
         
         ai_client = get_ai_client()
         user_id = await db.get_or_create_user_id()
